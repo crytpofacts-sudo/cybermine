@@ -4,6 +4,7 @@
  */
 import { motion } from "framer-motion";
 import { useEffect, useState } from "react";
+import { Link } from "wouter";
 
 const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310419663030263196/SzmZWtoZkXFNHVBrfb4wFY/hero-bg-UXY5vX9WHyaeosKoszJm37.webp";
 
@@ -101,13 +102,13 @@ export default function HeroSection() {
             transition={{ duration: 0.7, delay: 0.3 }}
             className="flex flex-wrap gap-4 mb-16"
           >
-            <a
-              href="#how-it-works"
+            <Link
+              href="/mine"
               className="group relative px-8 py-4 font-[Orbitron] text-sm font-bold tracking-wider text-[#050510] bg-[#00f0ff] rounded-lg overflow-hidden transition-all duration-300 hover:shadow-[0_0_30px_oklch(0.85_0.18_192/0.5)]"
             >
               <span className="relative z-10">START MINING</span>
               <div className="absolute inset-0 bg-gradient-to-r from-[#00f0ff] to-[#00d4ff] opacity-0 group-hover:opacity-100 transition-opacity" />
-            </a>
+            </Link>
             <a
               href="#protocol"
               className="px-8 py-4 font-[Orbitron] text-sm font-bold tracking-wider text-[#00f0ff] border border-[oklch(0.85_0.18_192/0.4)] rounded-lg hover:bg-[oklch(0.85_0.18_192/0.08)] transition-all duration-300"

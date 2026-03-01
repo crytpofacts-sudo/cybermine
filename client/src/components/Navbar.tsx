@@ -1,8 +1,9 @@
 /*
  * CyberMine Navbar — Neon Metropolis Design
- * Frosted glass nav with neon cyan accents, Orbitron branding
+ * Landing page nav with anchor links + LAUNCH APP button that goes to /mine
  */
 import { useState } from "react";
+import { Link } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { Menu, X } from "lucide-react";
 
@@ -50,14 +51,12 @@ export default function Navbar() {
 
           {/* CTA */}
           <div className="hidden lg:flex items-center gap-3">
-            <a
-              href="https://raydium.io"
-              target="_blank"
-              rel="noopener noreferrer"
+            <Link
+              href="/mine"
               className="px-5 py-2.5 text-sm font-[Orbitron] font-semibold text-[#050510] bg-[#00f0ff] rounded-lg hover:shadow-[0_0_25px_oklch(0.85_0.18_192/0.5)] transition-all duration-300 tracking-wide"
             >
               LAUNCH APP
-            </a>
+            </Link>
           </div>
 
           {/* Mobile Toggle */}
@@ -92,14 +91,13 @@ export default function Navbar() {
                   {link.label}
                 </a>
               ))}
-              <a
-                href="https://raydium.io"
-                target="_blank"
-                rel="noopener noreferrer"
+              <Link
+                href="/mine"
+                onClick={() => setMobileOpen(false)}
                 className="mt-2 px-5 py-3 text-sm font-[Orbitron] font-semibold text-center text-[#050510] bg-[#00f0ff] rounded-lg tracking-wide"
               >
                 LAUNCH APP
-              </a>
+              </Link>
             </div>
           </motion.div>
         )}

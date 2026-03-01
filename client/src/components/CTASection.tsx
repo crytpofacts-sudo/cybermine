@@ -5,6 +5,7 @@
 import { motion, useInView } from "framer-motion";
 import { useRef } from "react";
 import { Zap } from "lucide-react";
+import { Link } from "wouter";
 
 export default function CTASection() {
   const ref = useRef(null);
@@ -48,10 +49,8 @@ export default function CTASection() {
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <a
-              href="https://raydium.io"
-              target="_blank"
-              rel="noopener noreferrer"
+            <Link
+              href="/mine"
               className="group relative px-10 py-5 font-[Orbitron] text-base font-bold tracking-wider text-[#050510] bg-[#00f0ff] rounded-xl overflow-hidden transition-all duration-300 hover:shadow-[0_0_40px_oklch(0.85_0.18_192/0.5)] animate-glow-breathe"
             >
               <span className="relative z-10 flex items-center gap-2">
@@ -59,7 +58,7 @@ export default function CTASection() {
                 START MINING NOW
               </span>
               <div className="absolute inset-0 bg-gradient-to-r from-[#00f0ff] to-[#00d4ff] opacity-0 group-hover:opacity-100 transition-opacity" />
-            </a>
+            </Link>
             <a
               href="#protocol"
               className="px-10 py-5 font-[Orbitron] text-sm font-bold tracking-wider text-[oklch(0.6_0.02_265)] hover:text-[#00f0ff] transition-colors"
