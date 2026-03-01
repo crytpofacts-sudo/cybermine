@@ -1,18 +1,23 @@
 /*
  * CyberMine Navbar — Neon Metropolis Design
- * Landing page nav with anchor links + LAUNCH APP button that goes to /mine
+ * Landing page nav with section anchors + dApp page links + LAUNCH APP button
  */
 import { useState } from "react";
 import { Link } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu, X } from "lucide-react";
+import { Menu, X, Pickaxe, User, Users } from "lucide-react";
 
-const navLinks = [
+const sectionLinks = [
   { label: "Protocol", href: "#protocol" },
   { label: "Tokenomics", href: "#tokenomics" },
   { label: "How It Works", href: "#how-it-works" },
   { label: "Tiers", href: "#tiers" },
-  { label: "Referrals", href: "#referrals" },
+];
+
+const pageLinks = [
+  { label: "Mine", href: "/mine", icon: Pickaxe },
+  { label: "Profile", href: "/profile", icon: User },
+  { label: "Referrals", href: "/referrals", icon: Users },
 ];
 
 export default function Navbar() {
@@ -37,15 +42,32 @@ export default function Navbar() {
 
           {/* Desktop Nav */}
           <div className="hidden lg:flex items-center gap-1">
-            {navLinks.map((link) => (
+            {/* Section anchors */}
+            {sectionLinks.map((link) => (
               <a
                 key={link.href}
                 href={link.href}
-                className="px-4 py-2 text-sm font-[Space_Grotesk] text-[oklch(0.7_0.02_265)] hover:text-[#00f0ff] transition-colors duration-300 relative group"
+                className="px-3 py-2 text-sm font-[Space_Grotesk] text-[oklch(0.7_0.02_265)] hover:text-[#00f0ff] transition-colors duration-300 relative group"
               >
                 {link.label}
                 <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-0 h-[1px] bg-[#00f0ff] group-hover:w-3/4 transition-all duration-300" />
               </a>
+            ))}
+
+            {/* Divider */}
+            <div className="w-px h-5 bg-[oklch(0.3_0.04_265/0.4)] mx-2" />
+
+            {/* Page links */}
+            {pageLinks.map((link) => (
+              <Link
+                key={link.href}
+                href={link.href}
+                className="px-3 py-2 text-sm font-[Space_Grotesk] text-[oklch(0.7_0.02_265)] hover:text-[#00f0ff] transition-colors duration-300 relative group flex items-center gap-1.5"
+              >
+                <link.icon size={13} />
+                {link.label}
+                <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-0 h-[1px] bg-[#00f0ff] group-hover:w-3/4 transition-all duration-300" />
+              </Link>
             ))}
           </div>
 
@@ -81,7 +103,8 @@ export default function Navbar() {
             className="lg:hidden glass-panel border-b border-[oklch(0.85_0.18_192/0.12)]"
           >
             <div className="container py-4 flex flex-col gap-1">
-              {navLinks.map((link) => (
+              {/* Section anchors */}
+              {sectionLinks.map((link) => (
                 <a
                   key={link.href}
                   href={link.href}
@@ -91,6 +114,23 @@ export default function Navbar() {
                   {link.label}
                 </a>
               ))}
+
+              {/* Divider */}
+              <div className="h-px bg-[oklch(0.3_0.04_265/0.3)] my-2" />
+
+              {/* Page links */}
+              {pageLinks.map((link) => (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  onClick={() => setMobileOpen(false)}
+                  className="px-4 py-3 text-sm font-[Space_Grotesk] text-[oklch(0.7_0.02_265)] hover:text-[#00f0ff] hover:bg-[oklch(0.85_0.18_192/0.05)] rounded-lg transition-colors flex items-center gap-2"
+                >
+                  <link.icon size={14} />
+                  {link.label}
+                </Link>
+              ))}
+
               <Link
                 href="/mine"
                 onClick={() => setMobileOpen(false)}
