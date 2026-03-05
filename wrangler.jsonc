@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "cybermine",
+  "name": "lucky-lab-3598",
   "compatibility_date": "2025-09-27",
   "observability": {
     "enabled": true
