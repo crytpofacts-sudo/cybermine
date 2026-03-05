@@ -12,29 +12,29 @@ const steps = [
   {
     icon: Wallet,
     number: "01",
-    title: "Join the Protocol",
-    description: "Connect your MetaMask wallet to BNB Chain. Approve your LP tokens and join the protocol in one transaction. Optionally use a referral link from another miner.",
+    title: "Get LP Tokens",
+    description: "Add liquidity to the MINE/BNB pool on PancakeSwap. You'll receive LP tokens representing your share of the pool. These LP tokens are your mining equipment.",
     color: "cyan",
   },
   {
     icon: Droplets,
     number: "02",
-    title: "Add Liquidity on PancakeSwap",
-    description: "Provide liquidity to the MINE/BNB pool on PancakeSwap. You'll receive LP tokens representing your share of the pool.",
+    title: "Approve & Join",
+    description: "Connect your MetaMask wallet to BNB Chain. Approve your LP tokens, then join the protocol and stake in one transaction. Use a referral link for bonus weight.",
     color: "magenta",
   },
   {
     icon: ArrowDownToLine,
     number: "03",
-    title: "Deposit LP Tokens",
-    description: "Deposit your PancakeSwap LP tokens into the CyberMine vault. Your base weight is calculated from your LP amount and time tier multiplier.",
+    title: "Earn Weight Over Time",
+    description: "Your mining weight grows with your tier multiplier (up to 2.1x at 365 days). Add more LP anytime to the pending queue — it rolls over on your next claim.",
     color: "cyan",
   },
   {
     icon: Timer,
     number: "04",
     title: "Claim Every 12 Hours",
-    description: "After the cooldown period, claim your share of newly minted $MINE tokens. A small BNB fee applies per claim. The earlier you claim, the larger your share.",
+    description: "After the cooldown, claim your share of newly minted $MINE tokens. A small BNB fee applies per claim. Pending LP automatically rolls into active on each claim.",
     color: "magenta",
   },
 ];
@@ -156,7 +156,7 @@ export default function HowItWorksSection() {
                   </span>
                 </div>
                 <p className="text-xs text-[oklch(0.5_0.02_265)] mt-1 font-[Space_Grotesk]">
-                  LP tokens are securely held in a protocol-owned vault PDA
+                  LP tokens are securely held in the staking smart contract
                 </p>
               </div>
             </div>

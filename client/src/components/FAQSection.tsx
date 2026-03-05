@@ -37,6 +37,14 @@ const faqs = [
     answer: "When you join, you can optionally set a referrer (another user who has already joined). This is immutable. When you claim, your referrer receives 5% of your base weight as referral credit. When they claim, they can use up to 20% of their own base weight as a bonus from accumulated referral credits.",
   },
   {
+    question: "What is the pending LP queue?",
+    answer: "When you deposit more LP after joining, it goes into a pending queue. On your next claim, pending LP automatically rolls into your active deposit using a weighted-average timestamp. This means your tier multiplier is recalculated based on the combined deposit time. You can also emergency-withdraw pending LP before it rolls over.",
+  },
+  {
+    question: "Can I withdraw my LP tokens?",
+    answer: "Yes. You can withdraw active LP at any time (your tier multiplier will be recalculated). You can also emergency-withdraw pending LP before it rolls over. There is no lock-up period — you're free to leave whenever you want.",
+  },
+  {
     question: "Is the smart contract audited?",
     answer: "The CyberMine smart contract is deployed on BNB Chain (Solidity), designed with security-first principles: O(1) operations, deterministic accounting, no iteration over users, and comprehensive test coverage. The contract is verified on BscScan.",
   },

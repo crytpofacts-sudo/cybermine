@@ -2,20 +2,29 @@
  * CyberMine Mining Terminal — Neon Metropolis Design
  * BNB Chain integration with real contract calls:
  *   - Approve LP → Join & Stake → Deposit Pending → Claim → Withdraw
- *   - Animated radial cooldown progress ring
- *   - Live countdown timer from nextClaimTime
- *   - Active LP / Pending LP / Network share displays
- *   - Wrong-chain enforcement
+ *   - Tier badge with multiplier and countdown to next tier
+ *   - Weight breakdown (base LP, multiplier bonus, referral credit)
+ *   - Claim popup with social sharing
+ *   - Claim history from on-chain events
+ *   - Network weight & user weight %
  */
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Wallet, Zap, Clock, TrendingUp, Shield, ChevronDown, ChevronUp, AlertTriangle, ExternalLink } from "lucide-react";
+import {
+  Wallet, Zap, Clock, TrendingUp, Shield, ChevronDown, ChevronUp,
+  AlertTriangle, ExternalLink, Loader2, Award, ArrowDownToLine, ArrowUpFromLine,
+} from "lucide-react";
 import { formatUnits, parseUnits, MaxUint256 } from "ethers";
 import AppNavbar from "@/components/AppNavbar";
 import ParticleBackground from "@/components/ParticleBackground";
+import TierBadge from "@/components/TierBadge";
+import WeightBreakdown from "@/components/WeightBreakdown";
+import ClaimPopup from "@/components/ClaimPopup";
 import { useWallet } from "@/contexts/WalletContext";
 import { ACTIVE_CHAIN, addressUrl } from "@/config/contracts";
 import { getStoredReferral, shortenAddress } from "@/lib/referral";
+import { getTierInfo, getWeightBreakdown, getAllTiers } from "@/lib/tiers";
+import { txUrl } from "@/config/contracts";
 
 function formatCountdown(seconds: number): string {
   if (seconds <= 0) return "READY";
@@ -34,21 +43,27 @@ function formatBigNum(val: bigint, decimals: number, dp = 4): string {
   return num.toFixed(dp);
 }
 
+const FP = BigInt(10 ** 18);
+
 export default function Mine() {
   const {
-    connected, connecting, connect, wrongChain, switchChain,
+    connected, connecting, connect, disconnect, address, wrongChain, switchChain,
     userData, protocolData, lpBalance, lpAllowance, mineBalance,
     nextClaimTs, lpDecimals, mineDecimals,
+    claimHistory, lastClaimAmount, lastClaimTxHash, clearLastClaim,
     approveLp, joinAndDeposit, depositPending, claim, withdraw, emergencyWithdrawPending,
-    txPending,
+    txPending, initialLoading,
   } = useWallet();
 
   const [cooldownLeft, setCooldownLeft] = useState(0);
   const [showDepositPanel, setShowDepositPanel] = useState(false);
   const [showWithdrawPanel, setShowWithdrawPanel] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [showTierInfo, setShowTierInfo] = useState(false);
   const [depositAmount, setDepositAmount] = useState("");
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [joinAmount, setJoinAmount] = useState("");
+  const [showClaimPopup, setShowClaimPopup] = useState(false);
 
   const joined = userData?.joined ?? false;
   const paused = protocolData?.paused ?? false;
@@ -56,6 +71,39 @@ export default function Mine() {
   const cooldownSec = Number(protocolData?.cooldownSeconds ?? 0n);
 
   const storedRef = useMemo(() => getStoredReferral(), []);
+
+  // Show claim popup when lastClaimAmount is set
+  useEffect(() => {
+    if (lastClaimAmount && lastClaimTxHash) {
+      setShowClaimPopup(true);
+    }
+  }, [lastClaimAmount, lastClaimTxHash]);
+
+  // Tier info
+  const tierInfo = useMemo(() => {
+    if (!userData) return getTierInfo(0n);
+    return getTierInfo(userData.activeDepositTs);
+  }, [userData]);
+
+  // Weight breakdown
+  const weightBreak = useMemo(() => {
+    if (!userData) return { rawWeight: 0, multiplierBonus: 0, refCredit: 0, totalWeight: 0, baseWeight: 0 };
+    return getWeightBreakdown(
+      userData.cachedBaseWeightFp,
+      userData.referralWeightCreditFp,
+      tierInfo.multiplier,
+      lpDecimals,
+    );
+  }, [userData, tierInfo, lpDecimals]);
+
+  // User weight % of network
+  const userWeightPct = useMemo(() => {
+    if (!protocolData || !userData) return 0;
+    const totalW = Number(protocolData.totalBaseWeight) / Number(FP);
+    if (totalW === 0) return 0;
+    const userW = weightBreak.totalWeight;
+    return (userW / totalW) * 100;
+  }, [protocolData, userData, weightBreak]);
 
   // Cooldown timer
   useEffect(() => {
@@ -136,6 +184,7 @@ export default function Mine() {
   const activeLpFormatted = formatBigNum(userData?.activeLp ?? 0n, lpDecimals);
   const pendingLpFormatted = formatBigNum(userData?.pendingLp ?? 0n, lpDecimals);
   const mineBalFormatted = formatBigNum(mineBalance, mineDecimals, 2);
+  const totalClaimedFormatted = formatBigNum(userData?.totalClaimed ?? 0n, mineDecimals, 2);
 
   // Safe parseUnits for button label
   const joinAmountBn = useMemo(() => {
@@ -183,6 +232,8 @@ export default function Mine() {
               {connected
                 ? wrongChain
                   ? "Switch Network"
+                  : initialLoading
+                  ? "Loading..."
                   : joined
                   ? "Claim Your Rewards"
                   : "Join the Protocol"
@@ -256,7 +307,7 @@ export default function Mine() {
                   Wrong Network
                 </h2>
                 <p className="text-[oklch(0.55_0.02_265)] font-[Space_Grotesk] mb-8 leading-relaxed">
-                  Please switch to <span className="text-[#00f0ff] font-[Fira_Code]">{ACTIVE_CHAIN.name}</span> to use CyberMine.
+                  Please switch to {ACTIVE_CHAIN.name} to use CyberMine.
                 </p>
                 <button
                   onClick={switchChain}
@@ -268,398 +319,510 @@ export default function Mine() {
             </motion.div>
           )}
 
-          {/* Connected, correct chain, not joined */}
-          {connected && !wrongChain && !joined && !paused && (
+          {/* Loading */}
+          {connected && !wrongChain && initialLoading && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="max-w-lg mx-auto"
+            >
+              <div className="glass-panel rounded-2xl p-12 text-center">
+                <Loader2 size={40} className="mx-auto mb-4 text-[#00f0ff] animate-spin" />
+                <p className="font-[Orbitron] text-sm text-[oklch(0.5_0.02_265)]">
+                  Loading mining data...
+                </p>
+              </div>
+            </motion.div>
+          )}
+
+          {/* ─── JOIN FORM ─────────────────────────────────────── */}
+          {connected && !wrongChain && !initialLoading && !joined && (
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               className="max-w-lg mx-auto"
             >
-              <div className="glass-panel rounded-2xl p-8 md:p-12 text-center">
-                <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-[oklch(0.65_0.28_12/0.1)] border border-[oklch(0.65_0.28_12/0.2)] flex items-center justify-center">
-                  <Zap size={32} className="text-[#ff0066]" />
-                </div>
-                <h2 className="font-[Orbitron] text-xl font-bold text-white mb-3">
-                  Join CyberMine
-                </h2>
-                <p className="text-[oklch(0.55_0.02_265)] font-[Space_Grotesk] mb-4 leading-relaxed">
-                  Stake Pancake LP (MINE/BNB) to earn $MINE. Approve your LP tokens, then join and stake in one transaction.
+              <div className="glass-panel rounded-2xl p-6 md:p-8">
+                <h2 className="font-[Orbitron] text-lg font-bold text-white mb-1">Join CyberMine</h2>
+                <p className="text-sm text-[oklch(0.5_0.02_265)] font-[Space_Grotesk] mb-6">
+                  Stake PancakeSwap LP (MINE/BNB) to earn $MINE. Approve your LP tokens, then join and stake in one transaction.
                 </p>
 
-                {/* Referral detected */}
-                {storedRef && (
-                  <div className="mb-4 p-3 rounded-lg bg-[oklch(0.65_0.28_12/0.08)] border border-[oklch(0.65_0.28_12/0.2)]">
-                    <span className="text-xs font-[Space_Grotesk] text-[oklch(0.5_0.02_265)]">
-                      Referral detected:{" "}
-                    </span>
-                    <span className="font-[Fira_Code] text-xs text-[#ff0066]">
-                      {shortenAddress(storedRef)}
-                    </span>
-                  </div>
-                )}
-
-                {/* LP Balance */}
-                <div className="mb-4 p-3 rounded-lg bg-[oklch(0.1_0.02_265)] border border-[oklch(0.3_0.04_265/0.2)]">
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs font-[Space_Grotesk] text-[oklch(0.5_0.02_265)]">Your LP Balance</span>
-                    <span className="font-[Fira_Code] text-sm text-[#00f0ff]">{lpBalFormatted}</span>
-                  </div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-[Orbitron] text-[oklch(0.5_0.02_265)]">Your LP Balance</span>
+                  <span className="text-xs font-[Fira_Code] text-[#00f0ff]">{lpBalFormatted}</span>
                 </div>
-
-                {/* Amount input */}
-                <div className="mb-4">
-                  <div className="relative">
-                    <input
-                      type="number"
-                      value={joinAmount}
-                      onChange={(e) => setJoinAmount(e.target.value)}
-                      placeholder="LP amount to stake"
-                      className="w-full px-4 py-3 rounded-lg bg-[oklch(0.1_0.02_265)] border border-[oklch(0.3_0.04_265/0.3)] text-sm font-[Fira_Code] text-white placeholder:text-[oklch(0.35_0.02_265)] focus:border-[oklch(0.85_0.18_192/0.5)] focus:outline-none transition-colors"
-                    />
-                    <button
-                      onClick={() => setJoinAmount(formatUnits(lpBalance, lpDecimals))}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 text-[10px] font-[Orbitron] text-[#00f0ff] border border-[oklch(0.85_0.18_192/0.3)] rounded hover:bg-[oklch(0.85_0.18_192/0.1)] transition-colors"
-                    >
-                      MAX
-                    </button>
-                  </div>
-                </div>
-
-                {/* Fee info */}
-                {feeWei > 0n && (
-                  <p className="text-xs text-[oklch(0.45_0.02_265)] font-[Space_Grotesk] mb-4">
-                    Protocol fee: <span className="font-[Fira_Code] text-[#00f0ff]">{formatUnits(feeWei, 18)} BNB</span>
-                  </p>
-                )}
-
-                {/* Get LP link */}
-                <div className="mb-6">
-                  <a
-                    href="https://pancakeswap.finance/add/BNB/0x40325c4F37F577111faFC4f31AB7979026626680"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs font-[Space_Grotesk] text-[oklch(0.5_0.02_265)] hover:text-[#00f0ff] transition-colors flex items-center gap-1 justify-center"
+                <div className="flex gap-2 mb-4">
+                  <input
+                    type="number"
+                    value={joinAmount}
+                    onChange={(e) => setJoinAmount(e.target.value)}
+                    placeholder="LP token amount"
+                    className="flex-1 px-4 py-3 rounded-lg bg-[oklch(0.1_0.02_265)] border border-[oklch(0.3_0.04_265/0.3)] text-sm font-[Fira_Code] text-white placeholder:text-[oklch(0.35_0.02_265)] focus:border-[oklch(0.85_0.18_192/0.5)] focus:outline-none"
+                  />
+                  <button
+                    onClick={() => setJoinAmount(formatUnits(lpBalance, lpDecimals))}
+                    className="px-3 py-3 text-[10px] font-[Orbitron] font-bold text-[#00f0ff] border border-[oklch(0.85_0.18_192/0.3)] rounded-lg hover:bg-[oklch(0.85_0.18_192/0.08)] transition-colors"
                   >
-                    Need LP? Add liquidity on PancakeSwap <ExternalLink size={10} />
-                  </a>
+                    MAX
+                  </button>
                 </div>
+
+                <a
+                  href={`https://pancakeswap.finance/add/BNB/${ACTIVE_CHAIN.mineToken}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-xs font-[Space_Grotesk] text-[oklch(0.5_0.02_265)] hover:text-[#00f0ff] transition-colors mb-4"
+                >
+                  Need LP? Add liquidity on PancakeSwap <ExternalLink size={10} />
+                </a>
+
+                {feeWei > 0n && (
+                  <div className="text-[10px] font-[Fira_Code] text-[oklch(0.35_0.02_265)] mb-4">
+                    Join fee: {formatUnits(feeWei, 18)} {ACTIVE_CHAIN.nativeCurrency.symbol}
+                  </div>
+                )}
+
+                {storedRef && (
+                  <div className="text-[10px] font-[Fira_Code] text-[oklch(0.4_0.02_265)] mb-4 p-2 rounded-lg bg-[oklch(0.85_0.18_192/0.05)] border border-[oklch(0.85_0.18_192/0.15)]">
+                    Referrer: <span className="text-[#00f0ff]">{shortenAddress(storedRef, 6)}</span>
+                  </div>
+                )}
 
                 <button
                   onClick={handleJoin}
-                  disabled={txPending || !joinAmount || parseFloat(joinAmount) <= 0}
-                  className="w-full px-8 py-4 text-base font-[Orbitron] font-bold text-white bg-gradient-to-r from-[#ff0066] to-[#ff3388] rounded-xl hover:shadow-[0_0_30px_oklch(0.65_0.28_12/0.5)] transition-all duration-300 tracking-wide glow-magenta disabled:opacity-50"
+                  disabled={txPending || !joinAmount || parseFloat(joinAmount) <= 0 || paused}
+                  className="w-full py-3.5 rounded-lg font-[Orbitron] text-sm font-bold tracking-wide bg-[#00f0ff] text-[#050510] hover:shadow-[0_0_25px_oklch(0.85_0.18_192/0.4)] transition-all disabled:opacity-50"
                 >
                   {txPending
-                    ? "PROCESSING..."
+                    ? <><Loader2 size={16} className="inline animate-spin mr-2" />PROCESSING...</>
                     : joinAmountBn > 0n && needsApproval(joinAmountBn)
                     ? "APPROVE LP FIRST"
-                    : `JOIN & STAKE${feeWei > 0n ? ` — ${formatUnits(feeWei, 18)} BNB` : ""}`}
+                    : "JOIN & STAKE"}
                 </button>
               </div>
             </motion.div>
           )}
 
-          {/* Joined — Main Mining Terminal */}
-          {connected && !wrongChain && joined && (
-            <div className="max-w-5xl mx-auto">
-              {/* Top Stats Row */}
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.1 }}
-                className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-8"
-              >
-                {[
-                  { label: "ACTIVE LP", value: activeLpFormatted, color: "#00f0ff", icon: Zap },
-                  { label: "PENDING LP", value: pendingLpFormatted, color: "#ff0066", icon: Clock },
-                  { label: "$MINE BALANCE", value: mineBalFormatted, color: "#ffd700", icon: TrendingUp },
-                  { label: "REFERRAL COUNT", value: String(userData?.referralCount ?? 0n), color: "#00f0ff", icon: Shield },
-                ].map((stat, i) => (
-                  <div key={i} className="glass-panel rounded-xl p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <stat.icon size={12} style={{ color: stat.color }} />
-                      <span className="font-[Orbitron] text-[10px] tracking-wider" style={{ color: "oklch(0.5 0.02 265)" }}>
-                        {stat.label}
-                      </span>
-                    </div>
-                    <div className="font-[Fira_Code] text-lg md:text-xl font-bold" style={{ color: stat.color }}>
-                      {stat.value}
-                    </div>
-                  </div>
-                ))}
-              </motion.div>
-
-              {/* Center: The Big Claim Button */}
-              <motion.div
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: 0.2, type: "spring", stiffness: 100 }}
-                className="flex flex-col items-center mb-8"
-              >
-                <div className="relative">
-                  {/* Outer glow */}
-                  <div
-                    className={`absolute -inset-6 rounded-full blur-2xl transition-all duration-1000 ${
-                      canClaim
-                        ? "bg-[oklch(0.85_0.18_192/0.25)] animate-glow-breathe"
-                        : "bg-[oklch(0.65_0.28_12/0.1)]"
-                    }`}
-                  />
-
-                  {/* SVG Ring */}
-                  <svg width="300" height="300" viewBox="0 0 300 300" className="relative">
-                    <circle cx="150" cy="150" r={ringRadius} fill="none" stroke="oklch(0.2 0.02 265)" strokeWidth="6" />
-                    <circle
-                      cx="150" cy="150" r={ringRadius}
-                      fill="none"
-                      stroke={canClaim ? "#00f0ff" : "#ff0066"}
-                      strokeWidth="6"
-                      strokeLinecap="round"
-                      strokeDasharray={ringCircumference}
-                      strokeDashoffset={ringOffset}
-                      transform="rotate(-90 150 150)"
-                      className="transition-all duration-1000"
-                      style={{
-                        filter: canClaim
-                          ? "drop-shadow(0 0 8px oklch(0.85 0.18 192 / 60%))"
-                          : "drop-shadow(0 0 4px oklch(0.65 0.28 12 / 40%))",
-                      }}
-                    />
-                    {Array.from({ length: 24 }).map((_, i) => {
-                      const angle = (i * 360) / 24 - 90;
-                      const rad = (angle * Math.PI) / 180;
-                      const x1 = 150 + (ringRadius + 10) * Math.cos(rad);
-                      const y1 = 150 + (ringRadius + 10) * Math.sin(rad);
-                      const x2 = 150 + (ringRadius + 16) * Math.cos(rad);
-                      const y2 = 150 + (ringRadius + 16) * Math.sin(rad);
-                      return (
-                        <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke="oklch(0.3 0.02 265)" strokeWidth="1.5" />
-                      );
-                    })}
-                  </svg>
-
-                  {/* Center button */}
-                  <button
-                    onClick={handleClaim}
-                    disabled={!canClaim || txPending || paused}
-                    className={`absolute inset-0 m-auto w-[220px] h-[220px] rounded-full flex flex-col items-center justify-center transition-all duration-500 ${
-                      canClaim
-                        ? "bg-gradient-to-br from-[oklch(0.85_0.18_192/0.15)] to-[oklch(0.85_0.18_192/0.05)] border-2 border-[#00f0ff] hover:scale-105 hover:shadow-[0_0_50px_oklch(0.85_0.18_192/0.4)] active:scale-95"
-                        : "bg-[oklch(0.12_0.02_265/0.8)] border-2 border-[oklch(0.3_0.04_265/0.3)] cursor-not-allowed"
-                    }`}
-                  >
-                    {txPending ? (
-                      <>
-                        <div className="w-8 h-8 border-2 border-[#00f0ff] border-t-transparent rounded-full animate-spin mb-2" />
-                        <span className="font-[Orbitron] text-sm text-[#00f0ff] tracking-wider">MINING...</span>
-                      </>
-                    ) : canClaim ? (
-                      <>
-                        <span className="font-[Orbitron] text-2xl font-bold text-[#00f0ff] text-glow-cyan mb-1">CLAIM</span>
-                        {feeWei > 0n && (
-                          <span className="font-[Fira_Code] text-xs text-[oklch(0.5_0.02_265)]">
-                            {formatUnits(feeWei, 18)} BNB fee
-                          </span>
-                        )}
-                      </>
-                    ) : (userData?.activeLp ?? 0n) === 0n ? (
-                      <>
-                        <span className="font-[Orbitron] text-sm font-bold text-[oklch(0.5_0.02_265)] mb-1">DEPOSIT LP</span>
-                        <span className="font-[Fira_Code] text-xs text-[oklch(0.35_0.02_265)]">to start mining</span>
-                      </>
-                    ) : (
-                      <>
-                        <span className="font-[Orbitron] text-sm font-bold text-[#ff0066] mb-1">COOLDOWN</span>
-                        <span className="font-[Fira_Code] text-xl font-bold text-white">{formatCountdown(cooldownLeft)}</span>
-                        <span className="font-[Fira_Code] text-xs text-[oklch(0.4_0.02_265)] mt-1">until next claim</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-
-                {/* Pending LP info */}
-                {(userData?.pendingLp ?? 0n) > 0n && (
-                  <p className="mt-4 text-xs text-[oklch(0.5_0.02_265)] font-[Space_Grotesk] text-center max-w-sm">
-                    You have <span className="text-[#ff0066] font-[Fira_Code]">{pendingLpFormatted}</span> pending LP.
-                    It will roll into active LP on your next claim.
-                  </p>
-                )}
-              </motion.div>
-
-              {/* Bottom Panels */}
-              <div className="grid md:grid-cols-2 gap-4">
-                {/* Status Panel */}
-                <motion.div
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.3 }}
-                  className="glass-panel rounded-xl p-6"
-                >
-                  <h3 className="font-[Orbitron] text-sm font-bold text-white tracking-wider mb-4 flex items-center gap-2">
-                    <Shield size={14} className="text-[#00f0ff]" />
-                    STATUS
-                  </h3>
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-center">
-                      <span className="text-xs font-[Space_Grotesk] text-[oklch(0.5_0.02_265)]">Active LP</span>
-                      <span className="font-[Fira_Code] text-sm font-bold text-[#00f0ff]">{activeLpFormatted}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-xs font-[Space_Grotesk] text-[oklch(0.5_0.02_265)]">Pending LP</span>
-                      <span className="font-[Fira_Code] text-sm font-bold text-[#ff0066]">{pendingLpFormatted}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-xs font-[Space_Grotesk] text-[oklch(0.5_0.02_265)]">Referrer</span>
-                      <span className="font-[Fira_Code] text-sm text-white">
-                        {userData?.referrer && userData.referrer !== "0x0000000000000000000000000000000000000000"
-                          ? shortenAddress(userData.referrer)
-                          : "None"}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-xs font-[Space_Grotesk] text-[oklch(0.5_0.02_265)]">Referral Credit</span>
-                      <span className="font-[Fira_Code] text-sm font-bold text-[#ff0066]">
-                        {formatBigNum(userData?.referralWeightCreditFp ?? 0n, lpDecimals, 2)}
-                      </span>
-                    </div>
-                    <div className="pt-3 border-t border-[oklch(0.3_0.04_265/0.2)] flex justify-between items-center">
-                      <span className="text-xs font-[Orbitron] text-[oklch(0.6_0.02_265)] tracking-wider">$MINE BALANCE</span>
-                      <span className="font-[Fira_Code] text-lg font-bold text-[#ffd700]">{mineBalFormatted}</span>
-                    </div>
-                  </div>
+          {/* ─── ACTIVE MINING DASHBOARD ─────────────────────── */}
+          {connected && !wrongChain && !initialLoading && joined && (
+            <div className="max-w-4xl mx-auto space-y-5">
+              {/* Top row: Tier + Weight + Network Share */}
+              <div className="grid md:grid-cols-3 gap-4">
+                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
+                  <TierBadge tierInfo={tierInfo} />
                 </motion.div>
 
-                {/* LP Vault Panel */}
                 <motion.div
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.4 }}
-                  className="glass-panel rounded-xl p-6"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1 }}
+                  className="glass-panel rounded-xl p-4"
                 >
-                  <h3 className="font-[Orbitron] text-sm font-bold text-white tracking-wider mb-4 flex items-center gap-2">
-                    <Zap size={14} className="text-[#ff0066]" />
-                    LP VAULT
-                  </h3>
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-center">
-                      <span className="text-xs font-[Space_Grotesk] text-[oklch(0.5_0.02_265)]">Wallet LP Balance</span>
-                      <span className="font-[Fira_Code] text-sm font-bold text-white">{lpBalFormatted}</span>
-                    </div>
+                  <div className="text-xs font-[Orbitron] text-[oklch(0.5_0.02_265)] tracking-wider uppercase mb-2">
+                    Your Mining Weight
+                  </div>
+                  <div className="font-[Fira_Code] text-xl font-bold text-white mb-2">
+                    {weightBreak.totalWeight.toFixed(2)}
+                  </div>
+                  <WeightBreakdown
+                    rawWeight={weightBreak.rawWeight}
+                    multiplierBonus={weightBreak.multiplierBonus}
+                    refCredit={weightBreak.refCredit}
+                    totalWeight={weightBreak.totalWeight}
+                  />
+                </motion.div>
 
-                    {/* Deposit more */}
-                    <button
-                      onClick={() => { setShowDepositPanel(!showDepositPanel); setShowWithdrawPanel(false); }}
-                      disabled={paused}
-                      className="w-full py-3 rounded-lg font-[Orbitron] text-sm font-semibold tracking-wide border border-[oklch(0.85_0.18_192/0.3)] text-[#00f0ff] hover:bg-[oklch(0.85_0.18_192/0.08)] transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-                    >
-                      {showDepositPanel ? "HIDE" : "DEPOSIT MORE LP (PENDING)"}
-                      {showDepositPanel ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                    </button>
-
-                    <AnimatePresence>
-                      {showDepositPanel && (
-                        <motion.div
-                          initial={{ height: 0, opacity: 0 }}
-                          animate={{ height: "auto", opacity: 1 }}
-                          exit={{ height: 0, opacity: 0 }}
-                          className="overflow-hidden"
-                        >
-                          <div className="pt-3 space-y-3">
-                            <div className="relative">
-                              <input
-                                type="number"
-                                value={depositAmount}
-                                onChange={(e) => setDepositAmount(e.target.value)}
-                                placeholder="LP token amount"
-                                className="w-full px-4 py-3 rounded-lg bg-[oklch(0.1_0.02_265)] border border-[oklch(0.3_0.04_265/0.3)] text-sm font-[Fira_Code] text-white placeholder:text-[oklch(0.35_0.02_265)] focus:border-[oklch(0.85_0.18_192/0.5)] focus:outline-none"
-                              />
-                              <button
-                                onClick={() => setDepositAmount(formatUnits(lpBalance, lpDecimals))}
-                                className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 text-[10px] font-[Orbitron] text-[#00f0ff] border border-[oklch(0.85_0.18_192/0.3)] rounded hover:bg-[oklch(0.85_0.18_192/0.1)] transition-colors"
-                              >
-                                MAX
-                              </button>
-                            </div>
-                            <button
-                              onClick={handleDeposit}
-                              disabled={txPending || !depositAmount || parseFloat(depositAmount) <= 0}
-                              className="w-full py-2.5 rounded-lg font-[Orbitron] text-xs font-semibold tracking-wide bg-[#00f0ff] text-[#050510] hover:shadow-[0_0_20px_oklch(0.85_0.18_192/0.4)] transition-all disabled:opacity-50"
-                            >
-                              {txPending
-                                ? "PROCESSING..."
-                                : depositAmountBn > 0n && needsApproval(depositAmountBn)
-                                ? "APPROVE LP FIRST"
-                                : "DEPOSIT TO PENDING"}
-                            </button>
-                            <p className="text-[10px] text-[oklch(0.4_0.02_265)] font-[Space_Grotesk]">
-                              New deposits go into Pending. They become Active on your next claim.
-                            </p>
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-
-                    {/* Withdraw active */}
-                    <button
-                      onClick={() => { setShowWithdrawPanel(!showWithdrawPanel); setShowDepositPanel(false); }}
-                      disabled={(userData?.activeLp ?? 0n) === 0n}
-                      className="w-full py-3 rounded-lg font-[Orbitron] text-sm font-semibold tracking-wide border border-[oklch(0.65_0.28_12/0.3)] text-[#ff0066] hover:bg-[oklch(0.65_0.28_12/0.08)] transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-                    >
-                      {showWithdrawPanel ? "HIDE" : "WITHDRAW ACTIVE LP"}
-                      {showWithdrawPanel ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                    </button>
-
-                    <AnimatePresence>
-                      {showWithdrawPanel && (
-                        <motion.div
-                          initial={{ height: 0, opacity: 0 }}
-                          animate={{ height: "auto", opacity: 1 }}
-                          exit={{ height: 0, opacity: 0 }}
-                          className="overflow-hidden"
-                        >
-                          <div className="pt-3 space-y-3">
-                            <div className="relative">
-                              <input
-                                type="number"
-                                value={withdrawAmount}
-                                onChange={(e) => setWithdrawAmount(e.target.value)}
-                                placeholder="Amount to withdraw"
-                                className="w-full px-4 py-3 rounded-lg bg-[oklch(0.1_0.02_265)] border border-[oklch(0.3_0.04_265/0.3)] text-sm font-[Fira_Code] text-white placeholder:text-[oklch(0.35_0.02_265)] focus:border-[oklch(0.65_0.28_12/0.5)] focus:outline-none"
-                              />
-                              <button
-                                onClick={() => setWithdrawAmount(formatUnits(userData?.activeLp ?? 0n, lpDecimals))}
-                                className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 text-[10px] font-[Orbitron] text-[#ff0066] border border-[oklch(0.65_0.28_12/0.3)] rounded hover:bg-[oklch(0.65_0.28_12/0.1)] transition-colors"
-                              >
-                                MAX
-                              </button>
-                            </div>
-                            <button
-                              onClick={handleWithdraw}
-                              disabled={txPending || !withdrawAmount || parseFloat(withdrawAmount) <= 0}
-                              className="w-full py-2.5 rounded-lg font-[Orbitron] text-xs font-semibold tracking-wide border border-[oklch(0.65_0.28_12/0.3)] text-[#ff0066] hover:bg-[oklch(0.65_0.28_12/0.08)] transition-colors disabled:opacity-50"
-                            >
-                              {txPending ? "PROCESSING..." : "WITHDRAW"}
-                            </button>
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-
-                    {/* Get LP link */}
-                    <a
-                      href="https://pancakeswap.finance/add/BNB/0x40325c4F37F577111faFC4f31AB7979026626680"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="block text-center text-xs font-[Space_Grotesk] text-[oklch(0.5_0.02_265)] hover:text-[#00f0ff] transition-colors mt-2"
-                    >
-                      Need LP? Add liquidity on PancakeSwap →
-                    </a>
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.15 }}
+                  className="glass-panel rounded-xl p-4"
+                >
+                  <div className="text-xs font-[Orbitron] text-[oklch(0.5_0.02_265)] tracking-wider uppercase mb-2">
+                    Network Share
+                  </div>
+                  <div className="font-[Fira_Code] text-xl font-bold text-[#00f0ff] text-glow-cyan mb-1">
+                    {userWeightPct.toFixed(4)}%
+                  </div>
+                  <div className="text-[10px] font-[Fira_Code] text-[oklch(0.4_0.02_265)]">
+                    of total network weight
+                  </div>
+                  <div className="h-1.5 rounded-full bg-[oklch(0.15_0.02_265)] mt-3">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-[#00f0ff] to-[#00cc88] transition-all duration-700"
+                      style={{ width: `${Math.min(Math.max(userWeightPct, 0.5), 100)}%` }}
+                    />
                   </div>
                 </motion.div>
               </div>
 
+              {/* Tier info expandable */}
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
+                <button
+                  onClick={() => setShowTierInfo(!showTierInfo)}
+                  className="flex items-center gap-2 text-xs font-[Orbitron] text-[oklch(0.5_0.02_265)] hover:text-[#00f0ff] transition-colors mb-2"
+                >
+                  <Award size={14} />
+                  All Tier Multipliers
+                  {showTierInfo ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                </button>
+                <AnimatePresence>
+                  {showTierInfo && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="glass-panel rounded-xl p-4">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
+                          {getAllTiers().map((t, i) => (
+                            <div
+                              key={i}
+                              className={`rounded-lg p-3 text-center transition-all ${
+                                tierInfo.tier === i ? "ring-1" : ""
+                              }`}
+                              style={{
+                                background: tierInfo.tier === i ? `${t.color}15` : "oklch(0.1 0.02 265)",
+                                outlineColor: tierInfo.tier === i ? t.color : "transparent",
+                                outline: tierInfo.tier === i ? `1px solid ${t.color}` : "none",
+                              }}
+                            >
+                              <div className="text-lg mb-1">
+                                {["⛏️", "🔧", "🎯", "⚡", "💎", "👑"][i]}
+                              </div>
+                              <div className="text-[10px] font-[Orbitron] font-bold" style={{ color: t.color }}>
+                                {t.name}
+                              </div>
+                              <div className="text-xs font-[Fira_Code] text-[oklch(0.6_0.02_265)]">
+                                {t.mult.toFixed(2)}x
+                              </div>
+                              <div className="text-[9px] font-[Fira_Code] text-[oklch(0.4_0.02_265)]">
+                                {t.days === 0 ? "0-7d" : `${t.days}d+`}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </motion.div>
+
+              {/* Claim + Deposit row */}
+              <div className="grid md:grid-cols-[1fr_auto_1fr] gap-0 md:gap-6 items-start">
+                {/* Claim Ring */}
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: 0.25 }}
+                  className="glass-panel rounded-2xl p-6 flex flex-col items-center"
+                >
+                  <div className="relative w-[300px] h-[300px] flex items-center justify-center mb-4">
+                    <svg className="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 300 300">
+                      <circle cx="150" cy="150" r={ringRadius} fill="none" stroke="oklch(0.15 0.02 265)" strokeWidth="8" />
+                      <circle
+                        cx="150" cy="150" r={ringRadius} fill="none"
+                        stroke={canClaim ? "#00cc88" : "#00f0ff"}
+                        strokeWidth="8" strokeLinecap="round"
+                        strokeDasharray={ringCircumference}
+                        strokeDashoffset={ringOffset}
+                        className="transition-all duration-1000"
+                        style={{ filter: canClaim ? "drop-shadow(0 0 8px #00cc88)" : "drop-shadow(0 0 6px #00f0ff)" }}
+                      />
+                    </svg>
+                    <div className="text-center z-10">
+                      <div className={`font-[Fira_Code] text-3xl font-bold mb-1 ${canClaim ? "text-[#00cc88]" : "text-[#00f0ff] text-glow-cyan"}`}>
+                        {formatCountdown(cooldownLeft)}
+                      </div>
+                      <div className="text-[10px] font-[Orbitron] text-[oklch(0.4_0.02_265)] tracking-wider mb-4">
+                        {canClaim ? "READY TO CLAIM" : "COOLDOWN"}
+                      </div>
+                      <button
+                        onClick={handleClaim}
+                        disabled={!canClaim || txPending}
+                        className={`px-8 py-3 rounded-xl font-[Orbitron] text-sm font-bold tracking-wide transition-all duration-300 disabled:opacity-40 ${
+                          canClaim
+                            ? "bg-[#00cc88] text-[#050510] hover:shadow-[0_0_30px_oklch(0.7_0.18_160/0.5)]"
+                            : "bg-[oklch(0.15_0.02_265)] text-[oklch(0.4_0.02_265)] border border-[oklch(0.25_0.02_265)]"
+                        }`}
+                      >
+                        {txPending ? <Loader2 size={16} className="inline animate-spin mr-2" /> : null}
+                        {canClaim ? "CLAIM" : "LOCKED"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {feeWei > 0n && (
+                    <div className="text-[10px] font-[Fira_Code] text-[oklch(0.35_0.02_265)]">
+                      Claim fee: {formatUnits(feeWei, 18)} {ACTIVE_CHAIN.nativeCurrency.symbol}
+                    </div>
+                  )}
+
+                  {/* Pending LP info */}
+                  {(userData?.pendingLp ?? 0n) > 0n && (
+                    <p className="mt-3 text-xs text-[oklch(0.5_0.02_265)] font-[Space_Grotesk] text-center max-w-sm">
+                      <Clock size={10} className="inline mr-1 text-[oklch(0.8_0.2_90)]" />
+                      <span className="text-[#ff0066] font-[Fira_Code]">{pendingLpFormatted}</span> pending LP rolls into active on claim.
+                    </p>
+                  )}
+                </motion.div>
+
+                {/* Center divider (desktop) */}
+                <div className="hidden md:flex flex-col items-center self-stretch">
+                  <div className="w-px flex-1 bg-gradient-to-b from-transparent via-[oklch(0.85_0.18_192/0.2)] to-transparent" />
+                </div>
+
+                {/* Status + LP Vault */}
+                <div className="space-y-4 mt-5 md:mt-0">
+                  {/* Status Panel */}
+                  <motion.div
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.3 }}
+                    className="glass-panel rounded-xl p-5"
+                  >
+                    <h3 className="font-[Orbitron] text-sm font-bold text-white tracking-wider mb-4 flex items-center gap-2">
+                      <Shield size={14} className="text-[#00f0ff]" />
+                      STATUS
+                    </h3>
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-[Space_Grotesk] text-[oklch(0.5_0.02_265)]">Active LP</span>
+                        <span className="font-[Fira_Code] text-sm font-bold text-[#00f0ff]">{activeLpFormatted}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-[Space_Grotesk] text-[oklch(0.5_0.02_265)]">Pending LP</span>
+                        <span className="font-[Fira_Code] text-sm font-bold text-[#ff0066]">{pendingLpFormatted}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-[Space_Grotesk] text-[oklch(0.5_0.02_265)]">Referrer</span>
+                        <span className="font-[Fira_Code] text-sm text-white">
+                          {userData?.referrer && userData.referrer !== "0x0000000000000000000000000000000000000000"
+                            ? shortenAddress(userData.referrer)
+                            : "None"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-[Space_Grotesk] text-[oklch(0.5_0.02_265)]">Referral Credit</span>
+                        <span className="font-[Fira_Code] text-sm font-bold text-[#ff0066]">
+                          {formatBigNum(userData?.referralWeightCreditFp ?? 0n, 18, 2)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-[Space_Grotesk] text-[oklch(0.5_0.02_265)]">Total Claimed</span>
+                        <span className="font-[Fira_Code] text-sm text-white">{totalClaimedFormatted} MINE</span>
+                      </div>
+                      <div className="pt-3 border-t border-[oklch(0.3_0.04_265/0.2)] flex justify-between items-center">
+                        <span className="text-xs font-[Orbitron] text-[oklch(0.6_0.02_265)] tracking-wider">$MINE BALANCE</span>
+                        <span className="font-[Fira_Code] text-lg font-bold text-[#ffd700]">{mineBalFormatted}</span>
+                      </div>
+                    </div>
+                  </motion.div>
+
+                  {/* LP Vault Panel */}
+                  <motion.div
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.35 }}
+                    className="glass-panel rounded-xl p-5"
+                  >
+                    <h3 className="font-[Orbitron] text-sm font-bold text-white tracking-wider mb-4 flex items-center gap-2">
+                      <Zap size={14} className="text-[#ff0066]" />
+                      LP VAULT
+                    </h3>
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-[Space_Grotesk] text-[oklch(0.5_0.02_265)]">Wallet LP Balance</span>
+                        <span className="font-[Fira_Code] text-sm font-bold text-white">{lpBalFormatted}</span>
+                      </div>
+
+                      {/* Deposit more */}
+                      <button
+                        onClick={() => { setShowDepositPanel(!showDepositPanel); setShowWithdrawPanel(false); }}
+                        disabled={paused}
+                        className="w-full py-2.5 rounded-lg font-[Orbitron] text-xs font-semibold tracking-wide border border-[oklch(0.85_0.18_192/0.3)] text-[#00f0ff] hover:bg-[oklch(0.85_0.18_192/0.08)] transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        <ArrowDownToLine size={14} />
+                        {showDepositPanel ? "HIDE" : "DEPOSIT MORE LP"}
+                        {showDepositPanel ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                      </button>
+
+                      <AnimatePresence>
+                        {showDepositPanel && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: "auto", opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            className="overflow-hidden"
+                          >
+                            <div className="pt-2 space-y-3">
+                              <div className="relative">
+                                <input
+                                  type="number"
+                                  value={depositAmount}
+                                  onChange={(e) => setDepositAmount(e.target.value)}
+                                  placeholder="LP token amount"
+                                  className="w-full px-4 py-3 rounded-lg bg-[oklch(0.1_0.02_265)] border border-[oklch(0.3_0.04_265/0.3)] text-sm font-[Fira_Code] text-white placeholder:text-[oklch(0.35_0.02_265)] focus:border-[oklch(0.85_0.18_192/0.5)] focus:outline-none"
+                                />
+                                <button
+                                  onClick={() => setDepositAmount(formatUnits(lpBalance, lpDecimals))}
+                                  className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 text-[10px] font-[Orbitron] text-[#00f0ff] border border-[oklch(0.85_0.18_192/0.3)] rounded hover:bg-[oklch(0.85_0.18_192/0.1)] transition-colors"
+                                >
+                                  MAX
+                                </button>
+                              </div>
+                              <button
+                                onClick={handleDeposit}
+                                disabled={txPending || !depositAmount || parseFloat(depositAmount) <= 0}
+                                className="w-full py-2.5 rounded-lg font-[Orbitron] text-xs font-semibold tracking-wide bg-[#00f0ff] text-[#050510] hover:shadow-[0_0_20px_oklch(0.85_0.18_192/0.4)] transition-all disabled:opacity-50"
+                              >
+                                {txPending
+                                  ? "PROCESSING..."
+                                  : depositAmountBn > 0n && needsApproval(depositAmountBn)
+                                  ? "APPROVE LP FIRST"
+                                  : "DEPOSIT TO PENDING"}
+                              </button>
+                              <p className="text-[10px] text-[oklch(0.4_0.02_265)] font-[Space_Grotesk]">
+                                New deposits go into Pending. They become Active on your next claim.
+                              </p>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+
+                      {/* Withdraw active */}
+                      <button
+                        onClick={() => { setShowWithdrawPanel(!showWithdrawPanel); setShowDepositPanel(false); }}
+                        disabled={(userData?.activeLp ?? 0n) === 0n}
+                        className="w-full py-2.5 rounded-lg font-[Orbitron] text-xs font-semibold tracking-wide border border-[oklch(0.65_0.28_12/0.3)] text-[#ff0066] hover:bg-[oklch(0.65_0.28_12/0.08)] transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        <ArrowUpFromLine size={14} />
+                        {showWithdrawPanel ? "HIDE" : "WITHDRAW ACTIVE LP"}
+                        {showWithdrawPanel ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                      </button>
+
+                      <AnimatePresence>
+                        {showWithdrawPanel && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: "auto", opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            className="overflow-hidden"
+                          >
+                            <div className="pt-2 space-y-3">
+                              <div className="text-[10px] font-[Space_Grotesk] text-[oklch(0.5_0.02_265)] flex items-center gap-1.5 mb-1">
+                                <AlertTriangle size={10} className="text-[oklch(0.8_0.2_90)]" />
+                                Withdrawing will recalculate your tier multiplier.
+                              </div>
+                              <div className="relative">
+                                <input
+                                  type="number"
+                                  value={withdrawAmount}
+                                  onChange={(e) => setWithdrawAmount(e.target.value)}
+                                  placeholder="Amount to withdraw"
+                                  className="w-full px-4 py-3 rounded-lg bg-[oklch(0.1_0.02_265)] border border-[oklch(0.3_0.04_265/0.3)] text-sm font-[Fira_Code] text-white placeholder:text-[oklch(0.35_0.02_265)] focus:border-[oklch(0.65_0.28_12/0.5)] focus:outline-none"
+                                />
+                                <button
+                                  onClick={() => setWithdrawAmount(formatUnits(userData?.activeLp ?? 0n, lpDecimals))}
+                                  className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 text-[10px] font-[Orbitron] text-[#ff0066] border border-[oklch(0.65_0.28_12/0.3)] rounded hover:bg-[oklch(0.65_0.28_12/0.1)] transition-colors"
+                                >
+                                  MAX
+                                </button>
+                              </div>
+                              <button
+                                onClick={handleWithdraw}
+                                disabled={txPending || !withdrawAmount || parseFloat(withdrawAmount) <= 0}
+                                className="w-full py-2.5 rounded-lg font-[Orbitron] text-xs font-semibold tracking-wide border border-[oklch(0.65_0.28_12/0.3)] text-[#ff0066] hover:bg-[oklch(0.65_0.28_12/0.08)] transition-colors disabled:opacity-50"
+                              >
+                                {txPending ? "PROCESSING..." : "WITHDRAW"}
+                              </button>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+
+                      {/* Emergency withdraw pending */}
+                      {(userData?.pendingLp ?? 0n) > 0n && (
+                        <button
+                          onClick={handleEmergencyWithdraw}
+                          disabled={txPending}
+                          className="w-full py-2 text-[10px] font-[Orbitron] text-[oklch(0.5_0.02_265)] hover:text-[oklch(0.8_0.2_90)] border border-[oklch(0.2_0.02_265)] rounded-lg hover:border-[oklch(0.8_0.2_90/0.3)] transition-all"
+                        >
+                          Emergency Withdraw Pending ({pendingLpFormatted} LP)
+                        </button>
+                      )}
+
+                      {/* Get LP link */}
+                      <a
+                        href={`https://pancakeswap.finance/add/BNB/${ACTIVE_CHAIN.mineToken}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block text-center text-xs font-[Space_Grotesk] text-[oklch(0.5_0.02_265)] hover:text-[#00f0ff] transition-colors"
+                      >
+                        Need LP? Add liquidity on PancakeSwap →
+                      </a>
+                    </div>
+                  </motion.div>
+                </div>
+              </div>
+
+              {/* Claim History (collapsible) */}
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
+                <button
+                  onClick={() => setShowHistory(!showHistory)}
+                  className="flex items-center gap-2 text-xs font-[Orbitron] text-[oklch(0.5_0.02_265)] hover:text-[#00f0ff] transition-colors mb-2"
+                >
+                  <TrendingUp size={14} />
+                  Claim History
+                  {showHistory ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                </button>
+                <AnimatePresence>
+                  {showHistory && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="glass-panel rounded-xl p-4">
+                        {claimHistory.length === 0 ? (
+                          <p className="text-xs text-[oklch(0.4_0.02_265)] font-[Fira_Code] text-center py-4">
+                            No recent claims found (last ~2 days)
+                          </p>
+                        ) : (
+                          <div className="space-y-2">
+                            {claimHistory.slice(0, 10).map((c, i) => (
+                              <div key={i} className="flex items-center justify-between py-2 border-b border-[oklch(0.2_0.02_265/0.3)] last:border-0">
+                                <div>
+                                  <div className="text-xs font-[Fira_Code] text-white">
+                                    +{formatBigNum(c.reward, mineDecimals)} MINE
+                                  </div>
+                                  <div className="text-[10px] font-[Fira_Code] text-[oklch(0.4_0.02_265)]">
+                                    Block #{c.blockNumber}
+                                  </div>
+                                </div>
+                                <a
+                                  href={txUrl(c.txHash)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[oklch(0.4_0.02_265)] hover:text-[#00f0ff] transition-colors"
+                                >
+                                  <ExternalLink size={14} />
+                                </a>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </motion.div>
+
               {/* Contract link */}
-              <div className="mt-6 text-center">
+              <div className="text-center">
                 <a
                   href={addressUrl(ACTIVE_CHAIN.staking)}
                   target="_blank"
@@ -673,6 +836,18 @@ export default function Mine() {
           )}
         </div>
       </main>
+
+      {/* Claim Popup */}
+      <ClaimPopup
+        isOpen={showClaimPopup}
+        onClose={() => {
+          setShowClaimPopup(false);
+          clearLastClaim();
+        }}
+        amount={lastClaimAmount || "0"}
+        txHash={lastClaimTxHash}
+        address={address || ""}
+      />
     </div>
   );
 }
