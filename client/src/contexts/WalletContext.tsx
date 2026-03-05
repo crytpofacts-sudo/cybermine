@@ -155,7 +155,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         staking.feeWei(),
         staking.cooldownSeconds(),
         staking.paused(),
-        staking.totalBaseWeight(),
+        staking.totalBaseWeightFp(),
         staking.remainingSupply().catch(() => ZERO),
         lp.balanceOf(userAddr),
         lp.allowance(userAddr, ACTIVE_CHAIN.staking),
@@ -178,7 +178,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         feeWei: BigInt(fee),
         cooldownSeconds: BigInt(cooldown),
         paused: Boolean(paused),
-        totalBaseWeight: BigInt(totalWeight),
+        totalBaseWeight: BigInt(totalWeight), // totalBaseWeightFp on contract
         remainingSupply: BigInt(supply),
       });
       setLpBalance(BigInt(lpBal));

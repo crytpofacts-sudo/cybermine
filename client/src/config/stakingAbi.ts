@@ -65,7 +65,7 @@ export const STAKING_ABI = [
   },
   {
     inputs: [],
-    name: "totalBaseWeight",
+    name: "totalBaseWeightFp",
     outputs: [{ name: "", type: "uint256" }],
     stateMutability: "view",
     type: "function",
