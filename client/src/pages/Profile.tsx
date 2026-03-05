@@ -32,7 +32,7 @@ export default function Profile() {
   const {
     connected, address, connect, connecting, wrongChain, switchChain,
     userData, protocolData, lpBalance, mineBalance, lpDecimals, mineDecimals,
-    loading,
+    loading, initialLoading,
   } = useWallet();
 
   const joined = userData?.joined ?? false;
@@ -110,6 +110,22 @@ export default function Profile() {
                 >
                   SWITCH NETWORK
                 </button>
+              </div>
+            </motion.div>
+          ) : initialLoading ? (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="max-w-lg mx-auto"
+            >
+              <div className="glass-panel rounded-2xl p-8 md:p-12 text-center">
+                <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-[oklch(0.85_0.18_192/0.1)] border border-[oklch(0.85_0.18_192/0.2)] flex items-center justify-center">
+                  <div className="w-8 h-8 border-2 border-[#00f0ff] border-t-transparent rounded-full animate-spin" />
+                </div>
+                <h2 className="font-[Orbitron] text-xl font-bold text-white mb-3">Loading Profile</h2>
+                <p className="text-[oklch(0.55_0.02_265)] font-[Space_Grotesk]">
+                  Fetching your on-chain data...
+                </p>
               </div>
             </motion.div>
           ) : !joined ? (
