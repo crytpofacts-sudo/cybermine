@@ -25,13 +25,13 @@ const mechanics = [
   },
   {
     label: "Join Fee",
-    value: "0.0009 SOL",
-    description: "One-time fee to enter the protocol",
+    value: "BNB fee",
+    description: "One-time fee to enter the protocol (set by contract)",
   },
   {
     label: "Claim Fee",
-    value: "0.0009 SOL",
-    description: "Fee per reward claim, sent to dev wallet",
+    value: "BNB fee",
+    description: "Fee per reward claim, sent to dev wallet (set by contract)",
   },
 ];
 

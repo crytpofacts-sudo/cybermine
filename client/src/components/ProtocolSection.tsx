@@ -13,7 +13,7 @@ const features = [
   {
     icon: Zap,
     title: "Liquidity Mining",
-    description: "Deposit Raydium LP tokens and earn $MINE rewards every 12 hours. No hardware needed — your liquidity is your mining rig.",
+    description: "Deposit PancakeSwap LP tokens and earn $MINE rewards periodically. No hardware needed — your liquidity is your mining rig.",
     color: "cyan",
   },
   {
@@ -31,7 +31,7 @@ const features = [
   {
     icon: Shield,
     title: "Security First",
-    description: "O(1) operations, deterministic accounting, no iteration over users. Anchor smart contract with full test coverage.",
+    description: "O(1) operations, deterministic accounting, no iteration over users. Solidity smart contract verified on BscScan.",
     color: "magenta",
   },
 ];
@@ -101,7 +101,7 @@ export default function ProtocolSection() {
               </h2>
               <p className="text-[oklch(0.6_0.02_265)] text-lg leading-relaxed font-[Space_Grotesk] max-w-xl">
                 CyberMine reclaims the power of the network for the people. No GPUs, no ASICs, no
-                electricity bills. Provide liquidity to the Raydium pool, and the protocol rewards
+                electricity bills. Provide liquidity to the PancakeSwap pool, and the protocol rewards
                 your commitment with freshly minted $MINE tokens from a finite, decreasing supply.
               </p>
             </motion.div>

@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
@@ -9,6 +10,7 @@ import Home from "./pages/Home";
 import Mine from "./pages/Mine";
 import Profile from "./pages/Profile";
 import Referrals from "./pages/Referrals";
+import { captureReferralFromUrl } from "@/lib/referral";
 
 function Router() {
   return (
@@ -24,6 +26,10 @@ function Router() {
 }
 
 function App() {
+  useEffect(() => {
+    captureReferralFromUrl();
+  }, []);
+
   return (
     <ErrorBoundary>
       <ThemeProvider defaultTheme="dark">
