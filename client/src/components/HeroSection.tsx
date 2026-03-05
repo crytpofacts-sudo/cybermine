@@ -62,7 +62,7 @@ export default function HeroSection() {
           >
             <span className="w-2 h-2 rounded-full bg-[#00f0ff] animate-pulse" />
             <span className="text-xs font-[Orbitron] text-[#00f0ff] tracking-widest uppercase">
-              Built on Solana
+              Built on BNB Chain
             </span>
           </motion.div>
 
@@ -128,7 +128,7 @@ export default function HeroSection() {
               { label: "Total Supply", value: <><AnimatedCounter end={21} suffix="" />B</>, color: "cyan" },
               { label: "Emission Pool", value: "99%", color: "magenta" },
               { label: "Claim Cooldown", value: "12h", color: "cyan" },
-              { label: "Join Fee", value: "0.0009 SOL", color: "magenta" },
+              { label: "Join Fee", value: "BNB gas", color: "magenta" },
             ].map((stat, i) => (
               <div
                 key={i}

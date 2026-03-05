@@ -17,8 +17,8 @@ const footerLinks = [
   {
     title: "Resources",
     links: [
-      { label: "Raydium Pool", href: "https://raydium.io", external: true },
-      { label: "Solana Explorer", href: "https://explorer.solana.com", external: true },
+      { label: "PancakeSwap Pool", href: "https://pancakeswap.finance/add/BNB/0x40325c4F37F577111faFC4f31AB7979026626680", external: true },
+      { label: "BscScan", href: "https://testnet.bscscan.com/address/0xba75a1cdad9e5ff1218561f039b80d465a37723e", external: true },
       { label: "Documentation", href: "#" },
       { label: "Smart Contract", href: "#" },
     ],
@@ -54,13 +54,13 @@ export default function Footer() {
               </span>
             </div>
             <p className="text-sm text-[oklch(0.5_0.02_265)] font-[Space_Grotesk] max-w-sm leading-relaxed mb-6">
-              A Solana-based LP reward protocol. Provide liquidity, earn $MINE tokens.
+              A BNB Chain-based LP reward protocol. Provide liquidity, earn $MINE tokens.
               Mining for the people, not the machines.
             </p>
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-[oklch(0.85_0.18_192/0.2)] bg-[oklch(0.85_0.18_192/0.05)]">
               <span className="w-2 h-2 rounded-full bg-[#00f0ff] animate-pulse" />
               <span className="text-xs font-[Fira_Code] text-[#00f0ff]">
-                Powered by Solana
+                Powered by BNB Chain
               </span>
             </div>
           </div>

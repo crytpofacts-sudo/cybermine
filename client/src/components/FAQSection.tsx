@@ -10,15 +10,15 @@ import { ChevronDown } from "lucide-react";
 const faqs = [
   {
     question: "What is CyberMine?",
-    answer: "CyberMine is a Solana-based LP reward protocol. Users provide liquidity to a Raydium pool, deposit their LP tokens into the CyberMine vault, and earn $MINE tokens every 12 hours. It's liquidity mining without the hardware — your commitment is your hashrate.",
+    answer: "CyberMine is a BNB Chain-based LP reward protocol. Users provide liquidity to a PancakeSwap pool, deposit their LP tokens into the CyberMine vault, and earn $MINE tokens periodically. It's liquidity mining without the hardware — your commitment is your hashrate.",
   },
   {
     question: "How do I start mining $MINE?",
-    answer: "First, connect your Solana wallet and pay a one-time join fee of 0.0009 SOL. Then, add liquidity to the MINE/SOL pool on Raydium to receive LP tokens. Deposit those LP tokens into the CyberMine vault, and you can start claiming $MINE every 12 hours.",
+    answer: "First, connect your MetaMask wallet. Then, add liquidity to the MINE/BNB pool on PancakeSwap to receive LP tokens. Approve your LP tokens, then join and stake them in one transaction. You can start claiming $MINE after the cooldown period.",
   },
   {
     question: "What is the total supply of $MINE?",
-    answer: "The hard cap is 21,000,000,000 (21 billion) $MINE tokens. 1% (210M) is allocated for the initial Raydium LP pool, and 99% (20.79B) forms the emission pool that miners claim from over time.",
+    answer: "The hard cap is 21,000,000,000 (21 billion) $MINE tokens. 1% (210M) is allocated for the initial PancakeSwap LP pool, and 99% (20.79B) forms the emission pool that miners claim from over time.",
   },
   {
     question: "How are rewards calculated?",
@@ -38,7 +38,7 @@ const faqs = [
   },
   {
     question: "Is the smart contract audited?",
-    answer: "The CyberMine smart contract is built with Anchor on Solana, designed with security-first principles: O(1) operations, deterministic accounting, no iteration over users, and comprehensive test coverage. Audit status will be announced via our official channels.",
+    answer: "The CyberMine smart contract is deployed on BNB Chain (Solidity), designed with security-first principles: O(1) operations, deterministic accounting, no iteration over users, and comprehensive test coverage. The contract is verified on BscScan.",
   },
 ];
 

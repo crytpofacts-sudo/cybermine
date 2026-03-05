@@ -1,40 +1,43 @@
 /*
  * CyberMine Referrals Page — Neon Metropolis Design
- * Interactive referral dashboard with:
- *   - Holographic referral code display
- *   - Copy button with neon animation
- *   - Live referral bonus meter
- *   - Referral rules explanation
- *   - Referred users list (simulated)
+ * BNB Chain integration — reads real on-chain data:
+ *   - Referral link generation from connected address
+ *   - Referral count & weight credit from contract
+ *   - Copy & share functionality
+ *   - Wrong-chain enforcement
  */
 import { useState, useCallback } from "react";
 import { motion } from "framer-motion";
-import { Copy, Check, Users, Gift, Link2, Shield, Wallet, Zap, ArrowUpRight, Share2 } from "lucide-react";
+import { Copy, Check, Users, Gift, Link2, Shield, Wallet, Zap, ArrowUpRight, Share2, AlertTriangle } from "lucide-react";
+import { formatUnits } from "ethers";
 import AppNavbar from "@/components/AppNavbar";
 import ParticleBackground from "@/components/ParticleBackground";
 import { useWallet } from "@/contexts/WalletContext";
+import { ACTIVE_CHAIN } from "@/config/contracts";
+import { shortenAddress } from "@/lib/referral";
 import { Link } from "wouter";
 import { toast } from "sonner";
 
-// Simulated referral data
-const MOCK_REFERRALS = [
-  { address: "7xKX...AsU", lpAmount: 12_500, lastClaim: "2h ago", creditGiven: 625 },
-  { address: "Bq3F...9mN", lpAmount: 8_200, lastClaim: "5h ago", creditGiven: 410 },
-  { address: "Dw8K...2pR", lpAmount: 45_000, lastClaim: "11h ago", creditGiven: 2_250 },
-];
-
-function formatNumber(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + "M";
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
-  return n.toLocaleString();
+function formatBigNum(val: bigint, decimals: number, dp = 4): string {
+  const str = formatUnits(val, decimals);
+  const num = parseFloat(str);
+  if (num >= 1_000_000) return (num / 1_000_000).toFixed(2) + "M";
+  if (num >= 1_000) return (num / 1_000).toFixed(1) + "K";
+  return num.toFixed(dp);
 }
 
 export default function Referrals() {
-  const { connected, address, connect, connecting, userStats } = useWallet();
+  const {
+    connected, address, connect, connecting, wrongChain, switchChain,
+    userData, lpDecimals,
+  } = useWallet();
   const [copied, setCopied] = useState(false);
 
+  const joined = userData?.joined ?? false;
+
+  // Build referral link using the current page origin
   const referralLink = address
-    ? `https://cybermine.xyz/mine?ref=${address}`
+    ? `${window.location.origin}/?ref=${address}`
     : "";
 
   const handleCopy = useCallback(async () => {
@@ -51,7 +54,7 @@ export default function Referrals() {
 
   const handleShare = useCallback(() => {
     if (!address) return;
-    const text = `Join me on CyberMine — Mining for the People, Not the Machines. ⛏️\n\nProvide liquidity, earn $MINE tokens every 12 hours.\n\n${referralLink}`;
+    const text = `Join me on CyberMine — Mining for the People, Not the Machines.\n\nProvide liquidity on BNB Chain, earn $MINE tokens.\n\n${referralLink}`;
     if (navigator.share) {
       navigator.share({ title: "CyberMine", text, url: referralLink });
     } else {
@@ -59,11 +62,16 @@ export default function Referrals() {
     }
   }, [address, referralLink]);
 
-  // Simulated bonus meter
-  const totalCredit = MOCK_REFERRALS.reduce((sum, r) => sum + r.creditGiven, 0);
-  const bonusCap = userStats.baseWeight * 0.2;
-  const usableBonus = Math.min(totalCredit, bonusCap || 1);
-  const bonusPercent = bonusCap > 0 ? (usableBonus / bonusCap) * 100 : 0;
+  const referralCount = Number(userData?.referralCount ?? 0n);
+  const referralCredit = userData?.referralWeightCreditFp ?? 0n;
+  const activeLp = userData?.activeLp ?? 0n;
+
+  // Bonus cap = 20% of base weight (activeLp)
+  const bonusCapBn = activeLp / 5n; // 20%
+  const usableBonus = referralCredit < bonusCapBn ? referralCredit : bonusCapBn;
+  const bonusPercent = bonusCapBn > 0n
+    ? Number((usableBonus * 10000n) / bonusCapBn) / 100
+    : 0;
 
   return (
     <div className="min-h-screen bg-[#050510] text-white scan-line">
@@ -72,6 +80,15 @@ export default function Referrals() {
 
       <main className="relative z-10 pt-24 md:pt-28 pb-16">
         <div className="container max-w-5xl">
+          {/* Testnet Badge */}
+          {ACTIVE_CHAIN.isTestnet && (
+            <div className="text-center mb-4">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[oklch(0.85_0.18_80/0.15)] border border-[oklch(0.85_0.18_80/0.3)] text-[#ffd700] font-[Orbitron] text-[10px] tracking-wider">
+                <AlertTriangle size={10} /> TESTNET MODE
+              </span>
+            </div>
+          )}
+
           {/* Header */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -98,7 +115,7 @@ export default function Referrals() {
                 </div>
                 <h2 className="font-[Orbitron] text-xl font-bold text-white mb-3">Connect Wallet</h2>
                 <p className="text-[oklch(0.55_0.02_265)] font-[Space_Grotesk] mb-8">
-                  Connect your Solana wallet to access your referral dashboard.
+                  Connect your MetaMask wallet to access your referral dashboard.
                 </p>
                 <button
                   onClick={connect}
@@ -109,7 +126,29 @@ export default function Referrals() {
                 </button>
               </div>
             </motion.div>
-          ) : !userStats.joined ? (
+          ) : wrongChain ? (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="max-w-lg mx-auto"
+            >
+              <div className="glass-panel rounded-2xl p-8 md:p-12 text-center">
+                <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-[oklch(0.85_0.18_80/0.1)] border border-[oklch(0.85_0.18_80/0.2)] flex items-center justify-center">
+                  <AlertTriangle size={32} className="text-[#ffd700]" />
+                </div>
+                <h2 className="font-[Orbitron] text-xl font-bold text-white mb-3">Wrong Network</h2>
+                <p className="text-[oklch(0.55_0.02_265)] font-[Space_Grotesk] mb-8">
+                  Switch to <span className="text-[#00f0ff] font-[Fira_Code]">{ACTIVE_CHAIN.name}</span> to view your referrals.
+                </p>
+                <button
+                  onClick={switchChain}
+                  className="px-8 py-4 text-base font-[Orbitron] font-bold text-[#050510] bg-[#ffd700] rounded-xl hover:shadow-[0_0_30px_oklch(0.85_0.18_80/0.5)] transition-all duration-300 tracking-wide"
+                >
+                  SWITCH NETWORK
+                </button>
+              </div>
+            </motion.div>
+          ) : !joined ? (
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -195,7 +234,7 @@ export default function Referrals() {
                 <div className="glass-panel rounded-xl p-5 text-center">
                   <Users size={20} className="text-[#ff0066] mx-auto mb-2" />
                   <div className="font-[Fira_Code] text-2xl font-bold text-[#ff0066]">
-                    {MOCK_REFERRALS.length}
+                    {referralCount}
                   </div>
                   <div className="text-[10px] font-[Orbitron] text-[oklch(0.5_0.02_265)] tracking-wider mt-1">
                     REFERRALS
@@ -204,7 +243,7 @@ export default function Referrals() {
                 <div className="glass-panel rounded-xl p-5 text-center">
                   <Gift size={20} className="text-[#00f0ff] mx-auto mb-2" />
                   <div className="font-[Fira_Code] text-2xl font-bold text-[#00f0ff]">
-                    {formatNumber(totalCredit)}
+                    {formatBigNum(referralCredit, lpDecimals, 2)}
                   </div>
                   <div className="text-[10px] font-[Orbitron] text-[oklch(0.5_0.02_265)] tracking-wider mt-1">
                     TOTAL CREDIT
@@ -213,7 +252,7 @@ export default function Referrals() {
                 <div className="glass-panel rounded-xl p-5 text-center">
                   <Shield size={20} className="text-[#ffd700] mx-auto mb-2" />
                   <div className="font-[Fira_Code] text-2xl font-bold text-[#ffd700]">
-                    {formatNumber(usableBonus)}
+                    {formatBigNum(usableBonus, lpDecimals, 2)}
                   </div>
                   <div className="text-[10px] font-[Orbitron] text-[oklch(0.5_0.02_265)] tracking-wider mt-1">
                     USABLE BONUS
@@ -250,7 +289,7 @@ export default function Referrals() {
                 </div>
                 <div className="flex justify-between text-xs font-[Fira_Code] text-[oklch(0.45_0.02_265)]">
                   <span>0</span>
-                  <span>Cap: {formatNumber(bonusCap)} (20% of base weight)</span>
+                  <span>Cap: {formatBigNum(bonusCapBn, lpDecimals, 2)} (20% of active LP)</span>
                 </div>
               </motion.div>
 
@@ -293,49 +332,16 @@ export default function Referrals() {
                 ))}
               </motion.div>
 
-              {/* Referred Users Table */}
+              {/* Note about on-chain data */}
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.4 }}
-                className="glass-panel rounded-xl p-6"
+                className="glass-panel rounded-xl p-6 text-center"
               >
-                <h3 className="font-[Orbitron] text-sm font-bold text-white tracking-wider mb-5 flex items-center gap-2">
-                  <Users size={14} className="text-[#ff0066]" />
-                  YOUR REFERRALS
-                </h3>
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b border-[oklch(0.3_0.04_265/0.2)]">
-                        <th className="text-left py-3 text-[10px] font-[Orbitron] text-[oklch(0.5_0.02_265)] tracking-wider">WALLET</th>
-                        <th className="text-right py-3 text-[10px] font-[Orbitron] text-[oklch(0.5_0.02_265)] tracking-wider">LP AMOUNT</th>
-                        <th className="text-right py-3 text-[10px] font-[Orbitron] text-[oklch(0.5_0.02_265)] tracking-wider">LAST CLAIM</th>
-                        <th className="text-right py-3 text-[10px] font-[Orbitron] text-[oklch(0.5_0.02_265)] tracking-wider">CREDIT GIVEN</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {MOCK_REFERRALS.map((ref, i) => (
-                        <tr key={i} className="border-b border-[oklch(0.2_0.02_265/0.3)]">
-                          <td className="py-3 font-[Fira_Code] text-xs text-[oklch(0.6_0.02_265)]">
-                            {ref.address}
-                          </td>
-                          <td className="py-3 text-right font-[Fira_Code] text-sm text-white">
-                            {formatNumber(ref.lpAmount)}
-                          </td>
-                          <td className="py-3 text-right font-[Fira_Code] text-xs text-[oklch(0.5_0.02_265)]">
-                            {ref.lastClaim}
-                          </td>
-                          <td className="py-3 text-right font-[Fira_Code] text-sm font-semibold text-[#ff0066]">
-                            +{formatNumber(ref.creditGiven)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <p className="mt-4 text-[10px] text-[oklch(0.4_0.02_265)] font-[Space_Grotesk] text-center">
-                  Showing simulated data — connect to mainnet for real referral data
+                <p className="text-xs text-[oklch(0.4_0.02_265)] font-[Space_Grotesk]">
+                  All referral data is read directly from the BNB Chain smart contract.
+                  Referral count and credit update automatically when your referrals claim rewards.
                 </p>
               </motion.div>
             </div>

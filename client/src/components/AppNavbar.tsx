@@ -7,6 +7,7 @@ import { Link, useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { Menu, X, Wallet, LogOut, Pickaxe, User, Users, Home } from "lucide-react";
 import { useWallet } from "@/contexts/WalletContext";
+import { shortenAddress } from "@/lib/referral";
 
 const appLinks = [
   { label: "Home", href: "/", icon: Home },
@@ -70,7 +71,7 @@ export default function AppNavbar() {
               <div className="flex items-center gap-2">
                 <div className="px-4 py-2 glass-panel rounded-lg flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full bg-[#00f0ff] animate-pulse" />
-                  <span className="font-[Fira_Code] text-xs text-[#00f0ff]">{address}</span>
+                  <span className="font-[Fira_Code] text-xs text-[#00f0ff]">{shortenAddress(address || "", 4)}</span>
                 </div>
                 <button
                   onClick={disconnect}
@@ -137,7 +138,7 @@ export default function AppNavbar() {
                   <div className="flex flex-col gap-2">
                     <div className="px-4 py-3 glass-panel rounded-lg flex items-center gap-2">
                       <div className="w-2 h-2 rounded-full bg-[#00f0ff] animate-pulse" />
-                      <span className="font-[Fira_Code] text-xs text-[#00f0ff]">{address}</span>
+                      <span className="font-[Fira_Code] text-xs text-[#00f0ff]">{shortenAddress(address || "", 4)}</span>
                     </div>
                     <button
                       onClick={() => { disconnect(); setMobileOpen(false); }}
