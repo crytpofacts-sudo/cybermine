@@ -85,6 +85,7 @@ export default function HeroSection() {
   const [remainingSupply, setRemainingSupply] = useState<bigint | null>(null);
   const [totalWeight, setTotalWeight] = useState<bigint | null>(null);
   const [cooldown, setCooldown] = useState<bigint | null>(null);
+  const [totalMiners, setTotalMiners] = useState<number | null>(null);
 
   useEffect(() => {
     async function fetchProtocolStats() {
@@ -105,6 +106,24 @@ export default function HeroSection() {
     }
     fetchProtocolStats();
     const interval = setInterval(fetchProtocolStats, 60_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Fetch total miners from /api/stats (Cloudflare Pages Function)
+  useEffect(() => {
+    async function fetchStats() {
+      try {
+        const res = await fetch("/api/stats");
+        if (res.ok) {
+          const data = await res.json();
+          if (typeof data.totalUsers === "number") setTotalMiners(data.totalUsers);
+        }
+      } catch {
+        // Silently fail — stats are non-critical
+      }
+    }
+    fetchStats();
+    const interval = setInterval(fetchStats, 60_000);
     return () => clearInterval(interval);
   }, []);
 
@@ -287,10 +306,10 @@ export default function HeroSection() {
             </div>
             <div className="glass-panel rounded-xl p-4 md:p-5 border-[oklch(0.65_0.28_12/0.2)] hover:border-[oklch(0.65_0.28_12/0.4)] transition-all duration-300">
               <div className="text-xs font-[Orbitron] text-[oklch(0.5_0.02_265)] tracking-wider uppercase mb-2">
-                Emission Pool
+                Total Miners
               </div>
               <div className="text-xl md:text-2xl font-bold text-[#ff0066] text-glow-magenta">
-                99%
+                {totalMiners !== null ? totalMiners.toLocaleString() : "..."}
               </div>
             </div>
             <div className="glass-panel rounded-xl p-4 md:p-5 border-[oklch(0.85_0.18_192/0.2)] hover:border-[oklch(0.85_0.18_192/0.4)] transition-all duration-300 col-span-2 md:col-span-1">

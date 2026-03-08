@@ -10,6 +10,7 @@ export type ChainConfig = {
   chainIdHex: string;
   name: string;
   rpcUrl: string;
+  rpcUrls: string[]; // fallback list for resilience
   blockExplorer: string;
   nativeCurrency: { name: string; symbol: string; decimals: number };
   staking: string;
@@ -23,6 +24,11 @@ export const BSC_TESTNET: ChainConfig = {
   chainIdHex: "0x61",
   name: "BSC Testnet",
   rpcUrl: "https://data-seed-prebsc-1-s1.binance.org:8545/",
+  rpcUrls: [
+    "https://data-seed-prebsc-1-s1.binance.org:8545/",
+    "https://data-seed-prebsc-2-s1.binance.org:8545/",
+    "https://bsc-testnet-rpc.publicnode.com",
+  ],
   blockExplorer: "https://testnet.bscscan.com",
   nativeCurrency: { name: "tBNB", symbol: "tBNB", decimals: 18 },
   staking: "0xBa75A1CDAD9E5fF1218561f039b80D465A37723e",
@@ -36,6 +42,11 @@ export const BSC_MAINNET: ChainConfig = {
   chainIdHex: "0x38",
   name: "BSC Mainnet",
   rpcUrl: "https://bsc-dataseed.binance.org/",
+  rpcUrls: [
+    "https://bsc-dataseed.binance.org/",
+    "https://bsc-dataseed1.defibit.io/",
+    "https://bsc-dataseed1.ninicoin.io/",
+  ],
   blockExplorer: "https://bscscan.com",
   nativeCurrency: { name: "BNB", symbol: "BNB", decimals: 18 },
   // Replace with mainnet addresses when deployed
@@ -46,7 +57,8 @@ export const BSC_MAINNET: ChainConfig = {
 };
 
 // ─── ACTIVE NETWORK ────────────────────────────────────────────
-// Flip this to BSC_MAINNET when ready for production
+// Single switch: change this one line to BSC_MAINNET when ready for production.
+// The Cloudflare Pages Functions also need ACTIVE_CHAIN_ID=56 in env vars.
 export const ACTIVE_CHAIN = BSC_TESTNET;
 
 // ─── Chain map for lookup ──────────────────────────────────────

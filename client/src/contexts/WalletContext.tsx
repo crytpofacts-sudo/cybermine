@@ -1,8 +1,8 @@
 /*
  * CyberMine Wallet Context — BNB Chain (ethers.js v6)
  *
- * Provides MetaMask connection, chain enforcement, and contract interactions
- * for the CybermineStakingV7 staking contract on BSC Testnet / Mainnet.
+ * Provides MetaMask + WalletConnect connection, chain enforcement,
+ * and contract interactions for CybermineStakingV7 on BSC.
  *
  * Key reliability features:
  *   - initialLoading state prevents flash of "Join" form before first fetch
@@ -11,6 +11,7 @@
  *   - Provider is recreated on chain changes
  *   - Multiple RPC fallback endpoints for BSC testnet
  *   - Claim history from on-chain events
+ *   - ConnectModal with MetaMask + WalletConnect v2 options
  */
 import {
   createContext,
@@ -33,6 +34,8 @@ import { ACTIVE_CHAIN, txUrl } from "@/config/contracts";
 import { STAKING_ABI } from "@/config/stakingAbi";
 import { ERC20_ABI } from "@/config/erc20Abi";
 import { getStoredReferral, isValidAddress, shortenAddress } from "@/lib/referral";
+import { getWalletConnectProvider, disconnectWalletConnect, getWcInstance } from "@/lib/walletconnect";
+import ConnectModal, { type WalletType } from "@/components/ConnectModal";
 
 // ─── Types ─────────────────────────────────────────────────────
 export interface UserData {
@@ -74,7 +77,8 @@ export interface WalletContextType {
   address: string | null;
   connecting: boolean;
   wrongChain: boolean;
-  connect: () => Promise<void>;
+  walletType: WalletType | null;
+  connect: () => void; // opens modal
   disconnect: () => void;
   switchChain: () => Promise<void>;
 
@@ -111,7 +115,6 @@ export interface WalletContextType {
 
 const ZERO = 0n;
 const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
-const TOTAL_SUPPLY = 21_000_000_000; // 21B MINE
 
 // BSC Testnet has multiple RPC endpoints — try them in order
 const BSC_TESTNET_RPCS = [
@@ -143,8 +146,11 @@ function rotateRpc() {
 export function WalletProvider({ children }: { children: ReactNode }) {
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [connectingType, setConnectingType] = useState<WalletType | null>(null);
   const [wrongChain, setWrongChain] = useState(false);
   const [address, setAddress] = useState<string | null>(null);
+  const [walletType, setWalletType] = useState<WalletType | null>(null);
+  const [showConnectModal, setShowConnectModal] = useState(false);
 
   const [userData, setUserData] = useState<UserData | null>(null);
   const [protocolData, setProtocolData] = useState<ProtocolData | null>(null);
@@ -165,6 +171,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const signerRef = useRef<Signer | null>(null);
   const providerRef = useRef<BrowserProvider | null>(null);
+  const eip1193Ref = useRef<any>(null); // raw EIP-1193 provider (MetaMask or WC)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const refreshInFlightRef = useRef(false);
   const refreshNonceRef = useRef(0);
@@ -192,7 +199,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       const provider = getReadProvider();
       const staking = getStakingContract(provider);
       const block = await provider.getBlockNumber();
-      // Query last 50k blocks (about 2 days on BSC)
       const fromBlock = Math.max(0, block - 50000);
       const filter = staking.filters.Claimed(userAddr);
       const events = await staking.queryFilter(filter, fromBlock, block);
@@ -207,12 +213,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         remainingSupply: BigInt(e.args.remainingSupply),
       }));
 
-      // Sort newest first
       claims.sort((a, b) => b.blockNumber - a.blockNumber);
       setClaimHistory(claims);
     } catch (err) {
       console.warn("fetchClaimHistory failed:", err);
-      // Non-critical, don't break anything
     }
   }, []);
 
@@ -221,19 +225,16 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     const userAddr = address;
     if (!userAddr) return;
 
-    // Deduplicate: skip if another refresh is already in flight
     if (refreshInFlightRef.current) return;
     refreshInFlightRef.current = true;
 
     const thisNonce = ++refreshNonceRef.current;
 
-    // Show initialLoading only if we haven't loaded data yet
     if (!hasLoadedOnceRef.current) {
       setInitialLoading(true);
     }
     setLoading(true);
 
-    // Try with the browser provider first, fall back to read-only RPC
     let provider: BrowserProvider | JsonRpcProvider;
     if (providerRef.current) {
       provider = providerRef.current;
@@ -298,29 +299,32 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           joined: Boolean(userRaw.joined),
         };
         newNextClaim = BigInt(nextClaim);
-      } catch (retryErr) {
-        console.error("refreshAll: user data fetch failed on retry too", retryErr);
+      } catch (err2) {
+        console.warn("refreshAll: user data fallback also failed", err2);
       }
     }
 
-    // Attempt 2: protocol-level data
+    // Attempt 2: protocol data
     try {
-      const [fee, cooldown, paused, totalWeight, supply] = await Promise.all([
-        staking.feeWei(),
-        staking.cooldownSeconds(),
-        staking.paused(),
-        staking.totalBaseWeightFp(),
-        staking.remainingSupply().catch(() => ZERO),
+      const readProv = getReadProvider();
+      const stakingRead = getStakingContract(readProv);
+      const [fee, cd, paused, tbw, rs] = await Promise.all([
+        stakingRead.claimFee(),
+        stakingRead.claimCooldown(),
+        stakingRead.paused(),
+        stakingRead.totalBaseWeightFp(),
+        stakingRead.remainingSupply(),
       ]);
       newProtocol = {
         feeWei: BigInt(fee),
-        cooldownSeconds: BigInt(cooldown),
+        cooldownSeconds: BigInt(cd),
         paused: Boolean(paused),
-        totalBaseWeight: BigInt(totalWeight),
-        remainingSupply: BigInt(supply),
+        totalBaseWeight: BigInt(tbw),
+        remainingSupply: BigInt(rs),
       };
     } catch (err) {
-      console.warn("refreshAll: protocol data fetch failed", err);
+      console.warn("refreshAll: protocol data failed", err);
+      rotateRpc();
     }
 
     // Attempt 3: token balances
@@ -334,49 +338,67 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       newLpAllow = BigInt(lpAllow);
       newMineBal = BigInt(mineBal);
     } catch (err) {
-      console.warn("refreshAll: token balance fetch failed", err);
-    }
-
-    // Attempt 4: decimals (only needed once)
-    try {
-      const [lpDec, mineDec] = await Promise.all([
-        lp.decimals().catch(() => 18),
-        mineC.decimals().catch(() => 18),
-      ]);
-      newLpDec = Number(lpDec);
-      newMineDec = Number(mineDec);
-    } catch {
-      // decimals are non-critical
-    }
-
-    // Only apply state if this is still the latest refresh
-    if (thisNonce === refreshNonceRef.current) {
-      if (newUserData !== null) {
-        setUserData(newUserData);
-        hasLoadedOnceRef.current = true;
+      console.warn("refreshAll: token balances failed", err);
+      rotateRpc();
+      try {
+        const readProv = getReadProvider();
+        const lpFb = getLpContract(readProv);
+        const mineFb = getMineContract(readProv);
+        const [lpBal, lpAllow, mineBal] = await Promise.all([
+          lpFb.balanceOf(userAddr),
+          lpFb.allowance(userAddr, ACTIVE_CHAIN.staking),
+          mineFb.balanceOf(userAddr),
+        ]);
+        newLpBal = BigInt(lpBal);
+        newLpAllow = BigInt(lpAllow);
+        newMineBal = BigInt(mineBal);
+      } catch {
+        // keep existing
       }
+    }
+
+    // Attempt 4: decimals (only once)
+    if (lpDecimals === 18 && mineDecimals === 18) {
+      try {
+        const readProv = getReadProvider();
+        const lpR = getLpContract(readProv);
+        const mineR = getMineContract(readProv);
+        const [ld, md] = await Promise.all([lpR.decimals(), mineR.decimals()]);
+        newLpDec = Number(ld);
+        newMineDec = Number(md);
+      } catch {
+        // keep defaults
+      }
+    }
+
+    // Apply state only if this is still the latest nonce
+    if (thisNonce === refreshNonceRef.current) {
+      if (newUserData) setUserData(newUserData);
       if (newNextClaim !== null) setNextClaimTs(newNextClaim);
-      if (newProtocol !== null) setProtocolData(newProtocol);
+      if (newProtocol) setProtocolData(newProtocol);
       if (newLpBal !== null) setLpBalance(newLpBal);
       if (newLpAllow !== null) setLpAllowance(newLpAllow);
       if (newMineBal !== null) setMineBalance(newMineBal);
       if (newLpDec !== null) setLpDecimals(newLpDec);
       if (newMineDec !== null) setMineDecimals(newMineDec);
 
-      setLoading(false);
+      if (newUserData || newProtocol) {
+        hasLoadedOnceRef.current = true;
+      }
       setInitialLoading(false);
+      setLoading(false);
     }
 
     refreshInFlightRef.current = false;
-  }, [address]);
+  }, [address, lpDecimals, mineDecimals]);
 
-  // ─── Check chain ─────────────────────────────────────────────
+  // ─── Check chain ────────────────────────────────────────────
   const checkChain = useCallback(async () => {
-    if (!(window as any).ethereum) return;
+    const eth = eip1193Ref.current;
+    if (!eth) return;
     try {
-      const chainIdHex = await (window as any).ethereum.request({ method: "eth_chainId" });
-      const chainId = parseInt(chainIdHex, 16);
-      setWrongChain(chainId !== ACTIVE_CHAIN.chainId);
+      const chainId = await eth.request({ method: "eth_chainId" });
+      setWrongChain(parseInt(chainId, 16) !== ACTIVE_CHAIN.chainId);
     } catch {
       // ignore
     }
@@ -384,7 +406,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   // ─── Recreate provider (after chain switch or account change) ─
   const recreateProvider = useCallback(async () => {
-    const eth = (window as any).ethereum;
+    const eth = eip1193Ref.current;
     if (!eth) return;
     try {
       const provider = new BrowserProvider(eth);
@@ -398,9 +420,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   // ─── Switch chain ────────────────────────────────────────────
   const switchChain = useCallback(async () => {
-    if (!(window as any).ethereum) return;
+    const eth = eip1193Ref.current;
+    if (!eth) return;
     try {
-      await (window as any).ethereum.request({
+      await eth.request({
         method: "wallet_switchEthereumChain",
         params: [{ chainId: ACTIVE_CHAIN.chainIdHex }],
       });
@@ -409,7 +432,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     } catch (err: any) {
       if (err.code === 4902) {
         try {
-          await (window as any).ethereum.request({
+          await eth.request({
             method: "wallet_addEthereumChain",
             params: [
               {
@@ -430,8 +453,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, [recreateProvider]);
 
-  // ─── Connect ─────────────────────────────────────────────────
-  const connect = useCallback(async () => {
+  // ─── Connect with MetaMask ──────────────────────────────────
+  const connectMetaMask = useCallback(async () => {
     const eth = (window as any).ethereum;
     if (!eth) {
       toast.error("MetaMask not detected", {
@@ -441,16 +464,17 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       return;
     }
     setConnecting(true);
+    setConnectingType("metamask");
     try {
       const provider = new BrowserProvider(eth);
       await provider.send("eth_requestAccounts", []);
       const signer = await provider.getSigner();
       const addr = await signer.getAddress();
 
+      eip1193Ref.current = eth;
       providerRef.current = provider;
       signerRef.current = signer;
 
-      // Reset state for the new connection
       hasLoadedOnceRef.current = false;
       setUserData(null);
       setClaimHistory([]);
@@ -458,24 +482,99 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setLastClaimTxHash(null);
 
       setAddress(addr);
+      setWalletType("metamask");
       setConnected(true);
-      await checkChain();
+      setShowConnectModal(false);
+
+      // Check chain
+      const chainId = await eth.request({ method: "eth_chainId" });
+      setWrongChain(parseInt(chainId, 16) !== ACTIVE_CHAIN.chainId);
 
       toast.success("Wallet connected", {
-        description: `${shortenAddress(addr)}`,
+        description: `MetaMask · ${shortenAddress(addr)}`,
       });
     } catch (err: any) {
-      console.error("connect error:", err);
+      console.error("MetaMask connect error:", err);
       toast.error("Connection failed", { description: err?.message || "Unknown error" });
     } finally {
       setConnecting(false);
+      setConnectingType(null);
     }
-  }, [checkChain]);
+  }, []);
+
+  // ─── Connect with WalletConnect ─────────────────────────────
+  const connectWalletConnect = useCallback(async () => {
+    setConnecting(true);
+    setConnectingType("walletconnect");
+    try {
+      const wcProvider = await getWalletConnectProvider();
+
+      // Enable opens the QR modal
+      await wcProvider.enable();
+
+      const provider = new BrowserProvider(wcProvider as any);
+      const signer = await provider.getSigner();
+      const addr = await signer.getAddress();
+
+      eip1193Ref.current = wcProvider;
+      providerRef.current = provider;
+      signerRef.current = signer;
+
+      hasLoadedOnceRef.current = false;
+      setUserData(null);
+      setClaimHistory([]);
+      setLastClaimAmount(null);
+      setLastClaimTxHash(null);
+
+      setAddress(addr);
+      setWalletType("walletconnect");
+      setConnected(true);
+      setShowConnectModal(false);
+
+      // Check chain
+      const chainId = wcProvider.chainId;
+      setWrongChain(chainId !== ACTIVE_CHAIN.chainId);
+
+      toast.success("Wallet connected", {
+        description: `WalletConnect · ${shortenAddress(addr)}`,
+      });
+    } catch (err: any) {
+      console.error("WalletConnect connect error:", err);
+      if (err?.message?.includes("User rejected") || err?.code === 4001) {
+        toast.info("Connection cancelled");
+      } else {
+        toast.error("WalletConnect failed", { description: err?.message || "Unknown error" });
+      }
+    } finally {
+      setConnecting(false);
+      setConnectingType(null);
+    }
+  }, []);
+
+  // ─── Connect (opens modal) ──────────────────────────────────
+  const connect = useCallback(() => {
+    setShowConnectModal(true);
+  }, []);
+
+  // ─── Handle modal selection ─────────────────────────────────
+  const handleModalSelect = useCallback(async (type: WalletType) => {
+    if (type === "metamask") {
+      await connectMetaMask();
+    } else {
+      await connectWalletConnect();
+    }
+  }, [connectMetaMask, connectWalletConnect]);
 
   // ─── Disconnect ──────────────────────────────────────────────
-  const disconnect = useCallback(() => {
+  const disconnect = useCallback(async () => {
+    // Disconnect WalletConnect session if active
+    if (walletType === "walletconnect") {
+      await disconnectWalletConnect();
+    }
+
     setConnected(false);
     setAddress(null);
+    setWalletType(null);
     setUserData(null);
     setProtocolData(null);
     setLpBalance(ZERO);
@@ -487,31 +586,27 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setLastClaimTxHash(null);
     signerRef.current = null;
     providerRef.current = null;
+    eip1193Ref.current = null;
     hasLoadedOnceRef.current = false;
     toast.info("Wallet disconnected");
-  }, []);
+  }, [walletType]);
 
   // ─── Listen for account/chain changes ────────────────────────
   useEffect(() => {
-    const eth = (window as any).ethereum;
-    if (!eth) return;
+    const eth = eip1193Ref.current;
+    if (!eth || !connected) return;
 
     const handleAccountsChanged = async (accounts: string[]) => {
       if (accounts.length === 0) {
         disconnect();
-      } else if (connected) {
-        // Recreate provider for the new account FIRST
+      } else {
         await recreateProvider();
-
-        // Clear stale data from old address
         hasLoadedOnceRef.current = false;
         setUserData(null);
         setClaimHistory([]);
         setLastClaimAmount(null);
         setLastClaimTxHash(null);
-        refreshInFlightRef.current = false; // Allow immediate refresh
-
-        // THEN update the address — this triggers the useEffect that calls refreshAll
+        refreshInFlightRef.current = false;
         setAddress(accounts[0]);
       }
     };
@@ -519,16 +614,22 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       await checkChain();
       if (connected) {
         await recreateProvider();
-        // Force refresh after chain change
         refreshInFlightRef.current = false;
       }
+    };
+    const handleDisconnect = () => {
+      disconnect();
     };
 
     eth.on("accountsChanged", handleAccountsChanged);
     eth.on("chainChanged", handleChainChanged);
+    // WalletConnect emits "disconnect" when session ends
+    eth.on("disconnect", handleDisconnect);
+
     return () => {
       eth.removeListener("accountsChanged", handleAccountsChanged);
       eth.removeListener("chainChanged", handleChainChanged);
+      eth.removeListener("disconnect", handleDisconnect);
     };
   }, [connected, disconnect, checkChain, recreateProvider]);
 
@@ -574,7 +675,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
             onClick: () => window.open(txUrl(hash), "_blank"),
           },
         });
-        // Force a fresh refresh after tx
         refreshInFlightRef.current = false;
         await refreshAll();
         return hash;
@@ -633,7 +733,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const claim = useCallback(async () => {
     const fee = protocolData?.feeWei ?? ZERO;
-    // Capture balance before claim to calculate reward
     const balBefore = mineBalance;
 
     const hash = await executeTx("Claim Rewards", async () => {
@@ -642,8 +741,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     });
 
     if (hash) {
-      // After successful claim, calculate the reward from the new balance
-      // We need to re-read the balance to get the difference
       try {
         const mineC = getMineContract(providerRef.current || getReadProvider());
         const newBal = await mineC.balanceOf(address);
@@ -662,7 +759,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         // Non-critical
       }
 
-      // Refresh claim history
       if (address) fetchClaimHistory(address);
     }
 
@@ -696,6 +792,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         address,
         connecting,
         wrongChain,
+        walletType,
         connect,
         disconnect,
         switchChain,
@@ -724,6 +821,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       }}
     >
       {children}
+      <ConnectModal
+        open={showConnectModal}
+        onClose={() => setShowConnectModal(false)}
+        onSelect={handleModalSelect}
+        connecting={connecting}
+        connectingType={connectingType}
+      />
     </WalletContext.Provider>
   );
 }

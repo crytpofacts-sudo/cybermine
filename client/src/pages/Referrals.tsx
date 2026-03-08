@@ -34,8 +34,11 @@ function formatBigNum(val: bigint, decimals: number, dp = 4): string {
 
 interface ReferredMember {
   address: string;
-  blockNumber: number;
-  txHash: string;
+  blockNumber?: number;
+  txHash?: string;
+  activeLp?: bigint;
+  activeDepositTs?: bigint;
+  weight?: number; // computed real-time weight
 }
 
 const FP = BigInt(10 ** 18);
@@ -97,7 +100,8 @@ export default function Referrals() {
     return { used: usedCredit, max: maxCredit, pct };
   }, [userData]);
 
-  // Fetch referred members from Joined events
+  // Fetch referred members from /api/referrals (Cloudflare Pages Function)
+  // Falls back to on-chain event scanning if the API is unavailable
   useEffect(() => {
     if (!address || !joined || referralCount === 0) {
       setReferredMembers([]);
@@ -108,23 +112,64 @@ export default function Referrals() {
     const fetchMembers = async () => {
       setLoadingMembers(true);
       try {
+        // Try the API first
+        let refereeAddresses: string[] = [];
+        let fromApi = false;
+
+        try {
+          const res = await fetch(`/api/referrals?referrer=${address}&pageSize=100`);
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data.referees) && data.referees.length > 0) {
+              refereeAddresses = data.referees;
+              fromApi = true;
+            }
+          }
+        } catch {
+          // API unavailable, fall back to events
+        }
+
+        // Fallback: scan Joined events on-chain
+        if (!fromApi) {
+          try {
+            const provider = new JsonRpcProvider(ACTIVE_CHAIN.rpcUrl);
+            const staking = new Contract(ACTIVE_CHAIN.staking, STAKING_ABI, provider);
+            const currentBlock = await provider.getBlockNumber();
+            const fromBlock = Math.max(0, currentBlock - 500_000);
+            const filter = staking.filters.Joined(null, address);
+            const events = await staking.queryFilter(filter, fromBlock, currentBlock);
+            refereeAddresses = events.map((e: any) => e.args?.[0] || "").filter(Boolean);
+          } catch (err) {
+            console.warn("Failed to fetch referred members from events:", err);
+          }
+        }
+
+        if (cancelled) return;
+
+        // Fetch real-time weight for each referee via getUser
         const provider = new JsonRpcProvider(ACTIVE_CHAIN.rpcUrl);
         const staking = new Contract(ACTIVE_CHAIN.staking, STAKING_ABI, provider);
+        const nowTs = BigInt(Math.floor(Date.now() / 1000));
 
-        const currentBlock = await provider.getBlockNumber();
-        const fromBlock = Math.max(0, currentBlock - 500_000);
+        const members: ReferredMember[] = await Promise.all(
+          refereeAddresses.map(async (addr) => {
+            try {
+              const u = await staking.getUser(addr);
+              const activeLp = BigInt(u.activeLp);
+              const activeDepositTs = BigInt(u.activeDepositTs);
+              const cachedBaseWeightFp = BigInt(u.cachedBaseWeightFp);
+              // Compute real-time weight using tier multiplier
+              const tier = getTierInfo(activeDepositTs);
+              const baseW = Number(cachedBaseWeightFp) / Number(FP);
+              const weight = baseW * tier.multiplier;
+              return { address: addr, activeLp, activeDepositTs, weight };
+            } catch {
+              return { address: addr, weight: 0 };
+            }
+          })
+        );
 
-        const filter = staking.filters.JoinedWithReferrer(null, address);
-        const events = await staking.queryFilter(filter, fromBlock, currentBlock);
-
-        if (!cancelled) {
-          const members: ReferredMember[] = events.map((e: any) => ({
-            address: e.args?.[0] || "unknown",
-            blockNumber: e.blockNumber,
-            txHash: e.transactionHash,
-          }));
-          setReferredMembers(members);
-        }
+        if (!cancelled) setReferredMembers(members);
       } catch (err) {
         console.warn("Failed to fetch referred members:", err);
         if (!cancelled) setReferredMembers([]);
@@ -436,7 +481,7 @@ export default function Referrals() {
                   <div className="space-y-2">
                     {referredMembers.map((m, i) => (
                       <motion.div
-                        key={m.txHash}
+                        key={m.address}
                         initial={{ opacity: 0, x: -10 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: i * 0.05 }}
@@ -462,19 +507,31 @@ export default function Referrals() {
                             >
                               {shortenAddress(m.address, 6)}
                             </a>
-                            <div className="text-[10px] font-[Fira_Code] text-[oklch(0.4_0.02_265)]">
-                              Block #{m.blockNumber}
-                            </div>
+                            {m.activeLp !== undefined && (
+                              <div className="text-[10px] font-[Fira_Code] text-[oklch(0.4_0.02_265)]">
+                                {formatBigNum(m.activeLp, lpDecimals, 2)} LP staked
+                              </div>
+                            )}
                           </div>
                         </div>
-                        <a
-                          href={`${ACTIVE_CHAIN.blockExplorer}/tx/${m.txHash}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-[oklch(0.4_0.02_265)] hover:text-[#00f0ff] transition-colors"
-                        >
-                          <ExternalLink size={14} />
-                        </a>
+                        <div className="flex items-center gap-3">
+                          {m.weight !== undefined && m.weight > 0 && (
+                            <div className="text-right">
+                              <div className="text-xs font-[Fira_Code] text-[#00f0ff]">
+                                {m.weight >= 1000 ? (m.weight / 1000).toFixed(1) + "K" : m.weight.toFixed(2)}
+                              </div>
+                              <div className="text-[9px] font-[Orbitron] text-[oklch(0.4_0.02_265)] tracking-wider">WEIGHT</div>
+                            </div>
+                          )}
+                          <a
+                            href={addressUrl(m.address)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[oklch(0.4_0.02_265)] hover:text-[#00f0ff] transition-colors"
+                          >
+                            <ExternalLink size={14} />
+                          </a>
+                        </div>
                       </motion.div>
                     ))}
                   </div>

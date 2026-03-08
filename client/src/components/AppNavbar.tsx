@@ -19,7 +19,8 @@ const appLinks = [
 export default function AppNavbar() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [location] = useLocation();
-  const { connected, address, connecting, connect, disconnect } = useWallet();
+  const { connected, address, connecting, connect, disconnect, walletType } = useWallet();
+  const walletLabel = walletType === "walletconnect" ? "WC" : "MM";
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50">
@@ -71,6 +72,7 @@ export default function AppNavbar() {
               <div className="flex items-center gap-2">
                 <div className="px-4 py-2 glass-panel rounded-lg flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full bg-[#00f0ff] animate-pulse" />
+                  <span className="font-[Orbitron] text-[9px] text-[oklch(0.5_0.02_265)] tracking-wider">{walletLabel}</span>
                   <span className="font-[Fira_Code] text-xs text-[#00f0ff]">{shortenAddress(address || "", 4)}</span>
                 </div>
                 <button
@@ -138,6 +140,7 @@ export default function AppNavbar() {
                   <div className="flex flex-col gap-2">
                     <div className="px-4 py-3 glass-panel rounded-lg flex items-center gap-2">
                       <div className="w-2 h-2 rounded-full bg-[#00f0ff] animate-pulse" />
+                      <span className="font-[Orbitron] text-[9px] text-[oklch(0.5_0.02_265)] tracking-wider">{walletLabel}</span>
                       <span className="font-[Fira_Code] text-xs text-[#00f0ff]">{shortenAddress(address || "", 4)}</span>
                     </div>
                     <button
