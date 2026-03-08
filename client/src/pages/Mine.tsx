@@ -512,7 +512,7 @@ export default function Mine() {
 
               {/* Claim + Deposit row */}
               <div className="grid md:grid-cols-[1fr_auto_1fr] gap-0 md:gap-6 items-start">
-                {/* Claim Ring */}
+                {/* Mining Circle */}
                 <motion.div
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
@@ -520,36 +520,71 @@ export default function Mine() {
                   className="glass-panel rounded-2xl p-6 flex flex-col items-center"
                 >
                   <div className="relative w-[300px] h-[300px] flex items-center justify-center mb-4">
+                    {/* Outer glow ring */}
+                    <div
+                      className="absolute inset-0 rounded-full transition-all duration-1000"
+                      style={{
+                        background: canClaim
+                          ? "radial-gradient(circle, rgba(0,204,136,0.15) 0%, rgba(0,204,136,0.05) 50%, transparent 70%)"
+                          : "radial-gradient(circle, rgba(0,240,255,0.12) 0%, rgba(0,240,255,0.04) 50%, transparent 70%)",
+                        boxShadow: canClaim
+                          ? "0 0 60px rgba(0,204,136,0.3), 0 0 120px rgba(0,204,136,0.1), inset 0 0 60px rgba(0,204,136,0.05)"
+                          : "0 0 60px rgba(0,240,255,0.2), 0 0 120px rgba(0,240,255,0.08), inset 0 0 60px rgba(0,240,255,0.03)",
+                      }}
+                    />
+
+                    {/* Progress ring SVG */}
                     <svg className="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 300 300">
-                      <circle cx="150" cy="150" r={ringRadius} fill="none" stroke="oklch(0.15 0.02 265)" strokeWidth="8" />
+                      {/* Background ring */}
+                      <circle cx="150" cy="150" r={ringRadius} fill="none" stroke="oklch(0.15 0.02 265)" strokeWidth="6" />
+                      {/* Outer decorative ring */}
+                      <circle cx="150" cy="150" r="145" fill="none" stroke="oklch(0.12 0.02 265)" strokeWidth="1" />
+                      <circle cx="150" cy="150" r="115" fill="none" stroke="oklch(0.12 0.02 265)" strokeWidth="1" />
+                      {/* Progress ring */}
                       <circle
                         cx="150" cy="150" r={ringRadius} fill="none"
                         stroke={canClaim ? "#00cc88" : "#00f0ff"}
-                        strokeWidth="8" strokeLinecap="round"
+                        strokeWidth="6" strokeLinecap="round"
                         strokeDasharray={ringCircumference}
                         strokeDashoffset={ringOffset}
                         className="transition-all duration-1000"
-                        style={{ filter: canClaim ? "drop-shadow(0 0 8px #00cc88)" : "drop-shadow(0 0 6px #00f0ff)" }}
+                        style={{ filter: canClaim ? "drop-shadow(0 0 12px #00cc88) drop-shadow(0 0 4px #00cc88)" : "drop-shadow(0 0 10px #00f0ff) drop-shadow(0 0 3px #00f0ff)" }}
                       />
                     </svg>
-                    <div className="text-center z-10">
-                      <div className={`font-[Fira_Code] text-3xl font-bold mb-1 ${canClaim ? "text-[#00cc88]" : "text-[#00f0ff] text-glow-cyan"}`}>
+
+                    {/* Center content */}
+                    <div className="text-center z-10 flex flex-col items-center">
+                      <div className={`font-[Fira_Code] text-2xl font-bold mb-1 transition-colors duration-500 ${
+                        canClaim ? "text-[#00cc88]" : "text-[#00f0ff] text-glow-cyan"
+                      }`}>
                         {formatCountdown(cooldownLeft)}
                       </div>
                       <div className="text-[10px] font-[Orbitron] text-[oklch(0.4_0.02_265)] tracking-wider mb-4">
-                        {canClaim ? "READY TO CLAIM" : "COOLDOWN"}
+                        {canClaim ? "READY TO MINE" : "COOLDOWN"}
                       </div>
+
+                      {/* Round MINE button */}
                       <button
                         onClick={handleClaim}
                         disabled={!canClaim || txPending}
-                        className={`px-8 py-3 rounded-xl font-[Orbitron] text-sm font-bold tracking-wide transition-all duration-300 disabled:opacity-40 ${
+                        className={`w-[90px] h-[90px] rounded-full font-[Orbitron] text-xs font-bold tracking-wider transition-all duration-500 flex flex-col items-center justify-center gap-1.5 disabled:opacity-40 ${
                           canClaim
-                            ? "bg-[#00cc88] text-[#050510] hover:shadow-[0_0_30px_oklch(0.7_0.18_160/0.5)]"
-                            : "bg-[oklch(0.15_0.02_265)] text-[oklch(0.4_0.02_265)] border border-[oklch(0.25_0.02_265)]"
+                            ? "bg-gradient-to-br from-[#00cc88] to-[#00aa66] text-[#050510] shadow-[0_0_30px_rgba(0,204,136,0.5),0_0_60px_rgba(0,204,136,0.2)] hover:shadow-[0_0_40px_rgba(0,204,136,0.7),0_0_80px_rgba(0,204,136,0.3)] hover:scale-105"
+                            : "bg-[oklch(0.1_0.02_265)] text-[oklch(0.35_0.02_265)] border border-[oklch(0.2_0.02_265)] shadow-[0_0_15px_rgba(0,240,255,0.1)]"
                         }`}
                       >
-                        {txPending ? <Loader2 size={16} className="inline animate-spin mr-2" /> : null}
-                        {canClaim ? "CLAIM" : "LOCKED"}
+                        {txPending ? (
+                          <Loader2 size={24} className="animate-spin" />
+                        ) : (
+                          <>
+                            <img
+                              src="https://d2xsxph8kpxj0f.cloudfront.net/310419663030263196/SzmZWtoZkXFNHVBrfb4wFY/cybermine-icon-transparent-44WwcLSoNbwT5vFEsrEPF3.webp"
+                              alt=""
+                              className={`w-6 h-6 ${canClaim ? "" : "opacity-40"}`}
+                            />
+                            <span>{canClaim ? "MINE" : "LOCKED"}</span>
+                          </>
+                        )}
                       </button>
                     </div>
                   </div>

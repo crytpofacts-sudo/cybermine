@@ -59,12 +59,7 @@ export default function CTASection() {
               </span>
               <div className="absolute inset-0 bg-gradient-to-r from-[#00f0ff] to-[#00d4ff] opacity-0 group-hover:opacity-100 transition-opacity" />
             </Link>
-            <a
-              href="#protocol"
-              className="px-10 py-5 font-[Orbitron] text-sm font-bold tracking-wider text-[oklch(0.6_0.02_265)] hover:text-[#00f0ff] transition-colors"
-            >
-              READ THE DOCS
-            </a>
+
           </div>
         </motion.div>
       </div>

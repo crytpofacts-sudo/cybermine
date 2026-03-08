@@ -141,43 +141,50 @@ export default function TokenomicsSection() {
             initial={{ opacity: 0, x: 30 }}
             animate={isInView ? { opacity: 1, x: 0 } : {}}
             transition={{ duration: 0.6, delay: 0.3 }}
-            className="glass-panel rounded-2xl p-8"
+            className="glass-panel rounded-2xl p-8 md:p-10"
           >
-            <h3 className="font-[Orbitron] text-xl font-bold text-white mb-8 tracking-wide">
-              Emission Mechanics
+            <h3 className="font-[Orbitron] text-2xl md:text-3xl font-bold text-white mb-8 tracking-wide">
+              Emission{" "}
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#ff0066] to-[#ffd700]">Mechanics</span>
             </h3>
 
-            {/* Formula */}
-            <div className="mb-8 p-5 rounded-xl bg-[oklch(0.65_0.28_12/0.05)] border border-[oklch(0.65_0.28_12/0.15)]">
-              <div className="text-xs font-[Orbitron] text-[oklch(0.5_0.02_265)] tracking-wider uppercase mb-3">
+            {/* Formula — large and prominent */}
+            <div className="mb-8 p-6 md:p-8 rounded-2xl bg-gradient-to-br from-[oklch(0.65_0.28_12/0.08)] to-[oklch(0.85_0.18_192/0.05)] border border-[oklch(0.65_0.28_12/0.2)] shadow-[0_0_30px_oklch(0.65_0.28_12/0.05)]">
+              <div className="text-xs font-[Orbitron] text-[#ff0066] tracking-[0.3em] uppercase mb-4">
                 Reward Formula
               </div>
-              <div className="font-[Fira_Code] text-sm text-[#ff0066] leading-relaxed">
-                <span className="text-white">mint_amount</span> = remaining_supply
+              <div className="font-[Fira_Code] text-base md:text-lg text-[#ff0066] leading-loose">
+                <span className="text-white font-bold text-lg md:text-xl">mint_amount</span> =
                 <br />
-                <span className="ml-4">× <span className="text-[#00f0ff]">r</span></span>
+                <span className="ml-4 md:ml-8 text-[oklch(0.7_0.02_265)]">remaining_supply</span>
                 <br />
-                <span className="ml-4">× (<span className="text-[#00f0ff]">user_weight</span> / <span className="text-[#00f0ff]">total_weight</span>)</span>
+                <span className="ml-4 md:ml-8">× <span className="text-[#00f0ff] font-bold">r</span> <span className="text-[oklch(0.4_0.02_265)] text-sm">(0.0003)</span></span>
+                <br />
+                <span className="ml-4 md:ml-8">× <span className="text-[#00f0ff] font-bold">user_weight</span> / <span className="text-[#00f0ff] font-bold">total_weight</span></span>
               </div>
+              <p className="mt-4 text-xs text-[oklch(0.5_0.02_265)] font-[Space_Grotesk] leading-relaxed border-t border-[oklch(0.3_0.04_265/0.2)] pt-4">
+                Each claim mints a fraction of the remaining supply proportional to your share of the total network weight.
+                As supply decreases, each claim yields fewer tokens — rewarding early participants.
+              </p>
             </div>
 
-            {/* Parameters */}
+            {/* Parameters — bigger cards */}
             <div className="space-y-4">
               {mechanics.map((item, i) => (
                 <div
                   key={i}
-                  className="flex items-start gap-4 p-4 rounded-xl bg-[oklch(0.12_0.02_265/0.5)] border border-[oklch(0.3_0.04_265/0.2)] hover:border-[oklch(0.65_0.28_12/0.3)] transition-colors"
+                  className="flex items-start gap-4 p-5 rounded-xl bg-[oklch(0.12_0.02_265/0.5)] border border-[oklch(0.3_0.04_265/0.2)] hover:border-[oklch(0.65_0.28_12/0.3)] transition-colors"
                 >
                   <div className="flex-1">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-[Space_Grotesk] font-semibold text-white">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-base font-[Space_Grotesk] font-semibold text-white">
                         {item.label}
                       </span>
-                      <span className="font-[Fira_Code] text-sm font-bold text-[#ff0066]">
+                      <span className="font-[Fira_Code] text-base font-bold text-[#ff0066]">
                         {item.value}
                       </span>
                     </div>
-                    <p className="text-xs text-[oklch(0.5_0.02_265)] font-[Space_Grotesk]">
+                    <p className="text-sm text-[oklch(0.55_0.02_265)] font-[Space_Grotesk] leading-relaxed">
                       {item.description}
                     </p>
                   </div>

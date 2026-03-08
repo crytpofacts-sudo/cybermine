@@ -9,44 +9,17 @@ import { Link } from "wouter";
 import { formatUnits, JsonRpcProvider, Contract } from "ethers";
 import { ACTIVE_CHAIN, addressUrl } from "@/config/contracts";
 import { STAKING_ABI } from "@/config/stakingAbi";
-import { ExternalLink, Copy, CheckCircle2 } from "lucide-react";
-import { toast } from "sonner";
+import { ExternalLink, Copy, CheckCircle2, Users, Coins, Activity, Timer } from "lucide-react";
 
 const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310419663030263196/SzmZWtoZkXFNHVBrfb4wFY/hero-bg-UXY5vX9WHyaeosKoszJm37.webp";
+const MINE_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310419663030263196/SzmZWtoZkXFNHVBrfb4wFY/cybermine-icon-transparent-44WwcLSoNbwT5vFEsrEPF3.webp";
 
 const TOTAL_SUPPLY = 21_000_000_000; // 21B MINE
 const FP = BigInt(10 ** 18);
 
-function AnimatedCounter({ end, duration = 2, prefix = "", suffix = "", decimals = 0 }: { end: number; duration?: number; prefix?: string; suffix?: string; decimals?: number }) {
-  const [count, setCount] = useState(0);
-
-  useEffect(() => {
-    let start = 0;
-    const increment = end / (duration * 60);
-    const timer = setInterval(() => {
-      start += increment;
-      if (start >= end) {
-        setCount(end);
-        clearInterval(timer);
-      } else {
-        setCount(start);
-      }
-    }, 1000 / 60);
-    return () => clearInterval(timer);
-  }, [end, duration]);
-
-  const display = decimals > 0 ? count.toFixed(decimals) : Math.floor(count).toLocaleString();
-
-  return (
-    <span className="font-[Fira_Code] tabular-nums">
-      {prefix}{display}{suffix}
-    </span>
-  );
-}
-
-function CopyableAddress({ label, address }: { label: string; address: string }) {
+function CopyableAddress({ label, address, icon }: { label: string; address: string; icon?: React.ReactNode }) {
   const [copied, setCopied] = useState(false);
-  const short = address.slice(0, 6) + "..." + address.slice(-4);
+  const short = address.slice(0, 8) + "..." + address.slice(-6);
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(address);
@@ -55,18 +28,19 @@ function CopyableAddress({ label, address }: { label: string; address: string })
   };
 
   return (
-    <div className="flex items-center gap-2">
-      <span className="text-[10px] font-[Orbitron] text-[oklch(0.45_0.02_265)] uppercase tracking-wider">{label}:</span>
+    <div className="flex items-center gap-3 py-2.5 px-3 rounded-lg hover:bg-[oklch(0.85_0.18_192/0.05)] transition-colors group">
+      {icon && <div className="text-[oklch(0.5_0.02_265)] group-hover:text-[#00f0ff] transition-colors">{icon}</div>}
+      <span className="text-xs font-[Orbitron] text-[oklch(0.55_0.02_265)] uppercase tracking-wider min-w-[80px]">{label}</span>
       <a
         href={addressUrl(address)}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-xs font-[Fira_Code] text-[#00f0ff] hover:underline"
+        className="text-sm font-[Fira_Code] text-[#00f0ff] hover:underline tracking-wide"
       >
         {short}
       </a>
-      <button onClick={handleCopy} className="text-[oklch(0.4_0.02_265)] hover:text-[#00f0ff] transition-colors">
-        {copied ? <CheckCircle2 size={12} className="text-green-400" /> : <Copy size={12} />}
+      <button onClick={handleCopy} className="ml-1 text-[oklch(0.4_0.02_265)] hover:text-[#00f0ff] transition-colors">
+        {copied ? <CheckCircle2 size={14} className="text-green-400" /> : <Copy size={14} />}
       </button>
       <a
         href={addressUrl(address)}
@@ -74,7 +48,7 @@ function CopyableAddress({ label, address }: { label: string; address: string })
         rel="noopener noreferrer"
         className="text-[oklch(0.4_0.02_265)] hover:text-[#00f0ff] transition-colors"
       >
-        <ExternalLink size={12} />
+        <ExternalLink size={14} />
       </a>
     </div>
   );
@@ -109,35 +83,63 @@ export default function HeroSection() {
     return () => clearInterval(interval);
   }, []);
 
-  // Fetch total miners from /api/stats (Cloudflare Pages Function)
+  // Fetch total miners from Joined events directly (no /api/stats dependency)
   useEffect(() => {
-    async function fetchStats() {
+    async function fetchTotalMiners() {
+      // Try /api/stats first (Cloudflare Pages Function)
       try {
         const res = await fetch("/api/stats");
         if (res.ok) {
           const data = await res.json();
-          if (typeof data.totalUsers === "number") setTotalMiners(data.totalUsers);
+          if (typeof data.totalUsers === "number" && data.totalUsers > 0) {
+            setTotalMiners(data.totalUsers);
+            return;
+          }
         }
       } catch {
-        // Silently fail — stats are non-critical
+        // Fall through to on-chain query
+      }
+
+      // Fallback: count Joined events on-chain
+      try {
+        const provider = new JsonRpcProvider(ACTIVE_CHAIN.rpcUrl, ACTIVE_CHAIN.chainId);
+        const staking = new Contract(ACTIVE_CHAIN.staking, STAKING_ABI, provider);
+        const block = await provider.getBlockNumber();
+        const fromBlock = Math.max(0, block - 500_000);
+        const filter = staking.filters.Joined();
+        const events = await staking.queryFilter(filter, fromBlock, block);
+        setTotalMiners(events.length);
+      } catch {
+        // Silently fail
       }
     }
-    fetchStats();
-    const interval = setInterval(fetchStats, 60_000);
+    fetchTotalMiners();
+    const interval = setInterval(fetchTotalMiners, 120_000);
     return () => clearInterval(interval);
   }, []);
 
   // Derived stats
-  const supplyMined = useMemo(() => {
+  const mineDistributed = useMemo(() => {
     if (remainingSupply === null) return null;
     const remaining = Number(formatUnits(remainingSupply, 18));
-    return TOTAL_SUPPLY - remaining;
+    // 99% of total supply goes to miners, minus what's remaining in the contract
+    return TOTAL_SUPPLY * 0.99 - remaining;
   }, [remainingSupply]);
 
+  const mineDistributedDisplay = useMemo(() => {
+    if (mineDistributed === null) return "...";
+    if (mineDistributed < 0) return "0";
+    if (mineDistributed >= 1e9) return (mineDistributed / 1e9).toFixed(2) + "B";
+    if (mineDistributed >= 1e6) return (mineDistributed / 1e6).toFixed(1) + "M";
+    if (mineDistributed >= 1e3) return (mineDistributed / 1e3).toFixed(1) + "K";
+    return mineDistributed.toFixed(0);
+  }, [mineDistributed]);
+
   const supplyPct = useMemo(() => {
-    if (supplyMined === null) return 0;
-    return (supplyMined / TOTAL_SUPPLY) * 100;
-  }, [supplyMined]);
+    if (mineDistributed === null) return 0;
+    const totalEmission = TOTAL_SUPPLY * 0.99;
+    return Math.max(0, (mineDistributed / totalEmission) * 100);
+  }, [mineDistributed]);
 
   const remainingDisplay = useMemo(() => {
     if (remainingSupply === null) return "...";
@@ -258,17 +260,17 @@ export default function HeroSection() {
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.7, delay: 0.35 }}
-            className="glass-panel rounded-xl p-4 md:p-5 mb-6 border-[oklch(0.85_0.18_192/0.15)]"
+            className="glass-panel rounded-xl p-5 md:p-6 mb-6 border-[oklch(0.85_0.18_192/0.15)]"
           >
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-[Orbitron] text-[oklch(0.5_0.02_265)] tracking-wider uppercase">
-                Mining Supply Progress
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-sm font-[Orbitron] text-[oklch(0.6_0.02_265)] tracking-wider uppercase font-semibold">
+                Emission Progress
               </span>
-              <span className="text-xs font-[Fira_Code] text-[oklch(0.5_0.02_265)]">
-                {supplyPct.toFixed(4)}% mined
+              <span className="text-sm font-[Fira_Code] text-[#00f0ff] font-semibold">
+                {supplyPct.toFixed(4)}% distributed
               </span>
             </div>
-            <div className="h-3 rounded-full bg-[oklch(0.12_0.02_265)] overflow-hidden mb-2">
+            <div className="h-4 rounded-full bg-[oklch(0.12_0.02_265)] overflow-hidden mb-3 border border-[oklch(0.2_0.02_265/0.3)]">
               <motion.div
                 className="h-full rounded-full"
                 style={{
@@ -279,62 +281,85 @@ export default function HeroSection() {
                 transition={{ duration: 1.5, ease: "easeOut" }}
               />
             </div>
-            <div className="flex items-center justify-between text-[10px] font-[Fira_Code]">
-              <span className="text-[oklch(0.45_0.02_265)]">
-                Remaining: <span className="text-[#00f0ff]">{remainingDisplay}</span> MINE
+            <div className="flex items-center justify-between text-xs font-[Fira_Code]">
+              <span className="text-[oklch(0.5_0.02_265)]">
+                Remaining: <span className="text-[#00f0ff] font-semibold">{remainingDisplay}</span> MINE
               </span>
-              <span className="text-[oklch(0.45_0.02_265)]">
-                Total: <span className="text-[oklch(0.6_0.02_265)]">21B</span> MINE
+              <span className="text-[oklch(0.5_0.02_265)]">
+                Emission Pool: <span className="text-[oklch(0.65_0.02_265)] font-semibold">20.79B</span> MINE (99%)
               </span>
             </div>
           </motion.div>
 
-          {/* Stats Row */}
+          {/* Stats Row - 4 cards */}
           <motion.div
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.7, delay: 0.4 }}
-            className="grid grid-cols-2 md:grid-cols-3 gap-4 md:gap-5 mb-6"
+            className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-5 mb-6"
           >
             <div className="glass-panel rounded-xl p-4 md:p-5 border-[oklch(0.85_0.18_192/0.2)] hover:border-[oklch(0.85_0.18_192/0.4)] transition-all duration-300">
-              <div className="text-xs font-[Orbitron] text-[oklch(0.5_0.02_265)] tracking-wider uppercase mb-2">
-                Total Network Weight
-              </div>
-              <div className="text-xl md:text-2xl font-bold text-[#00f0ff] text-glow-cyan">
-                {totalWeightDisplay}
-              </div>
-            </div>
-            <div className="glass-panel rounded-xl p-4 md:p-5 border-[oklch(0.65_0.28_12/0.2)] hover:border-[oklch(0.65_0.28_12/0.4)] transition-all duration-300">
-              <div className="text-xs font-[Orbitron] text-[oklch(0.5_0.02_265)] tracking-wider uppercase mb-2">
-                Total Miners
+              <div className="flex items-center gap-2 mb-2">
+                <Users size={14} className="text-[#ff0066]" />
+                <span className="text-[10px] font-[Orbitron] text-[oklch(0.5_0.02_265)] tracking-wider uppercase">
+                  Total Miners
+                </span>
               </div>
               <div className="text-xl md:text-2xl font-bold text-[#ff0066] text-glow-magenta">
                 {totalMiners !== null ? totalMiners.toLocaleString() : "..."}
               </div>
             </div>
-            <div className="glass-panel rounded-xl p-4 md:p-5 border-[oklch(0.85_0.18_192/0.2)] hover:border-[oklch(0.85_0.18_192/0.4)] transition-all duration-300 col-span-2 md:col-span-1">
-              <div className="text-xs font-[Orbitron] text-[oklch(0.5_0.02_265)] tracking-wider uppercase mb-2">
-                Claim Cooldown
+            <div className="glass-panel rounded-xl p-4 md:p-5 border-[oklch(0.85_0.18_192/0.2)] hover:border-[oklch(0.85_0.18_192/0.4)] transition-all duration-300">
+              <div className="flex items-center gap-2 mb-2">
+                <Coins size={14} className="text-[#00f0ff]" />
+                <span className="text-[10px] font-[Orbitron] text-[oklch(0.5_0.02_265)] tracking-wider uppercase">
+                  $MINE Distributed
+                </span>
               </div>
               <div className="text-xl md:text-2xl font-bold text-[#00f0ff] text-glow-cyan">
+                {mineDistributedDisplay}
+              </div>
+            </div>
+            <div className="glass-panel rounded-xl p-4 md:p-5 border-[oklch(0.85_0.18_192/0.2)] hover:border-[oklch(0.85_0.18_192/0.4)] transition-all duration-300">
+              <div className="flex items-center gap-2 mb-2">
+                <Activity size={14} className="text-[#00f0ff]" />
+                <span className="text-[10px] font-[Orbitron] text-[oklch(0.5_0.02_265)] tracking-wider uppercase">
+                  Network Weight
+                </span>
+              </div>
+              <div className="text-xl md:text-2xl font-bold text-[#00f0ff] text-glow-cyan">
+                {totalWeightDisplay}
+              </div>
+            </div>
+            <div className="glass-panel rounded-xl p-4 md:p-5 border-[oklch(0.85_0.18_192/0.2)] hover:border-[oklch(0.85_0.18_192/0.4)] transition-all duration-300">
+              <div className="flex items-center gap-2 mb-2">
+                <Timer size={14} className="text-[oklch(0.8_0.2_90)]" />
+                <span className="text-[10px] font-[Orbitron] text-[oklch(0.5_0.02_265)] tracking-wider uppercase">
+                  Claim Cooldown
+                </span>
+              </div>
+              <div className="text-xl md:text-2xl font-bold text-[oklch(0.8_0.2_90)]">
                 {cooldownDisplay}
               </div>
             </div>
           </motion.div>
 
-          {/* Contract Addresses */}
+          {/* Contract Addresses - bigger and more visible */}
           <motion.div
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.7, delay: 0.45 }}
-            className="glass-panel rounded-xl p-4 border-[oklch(0.2_0.02_265/0.5)]"
+            className="glass-panel rounded-xl p-5 md:p-6 border-[oklch(0.85_0.18_192/0.2)]"
           >
-            <div className="text-[10px] font-[Orbitron] text-[oklch(0.4_0.02_265)] tracking-wider uppercase mb-3">
-              Contract Addresses
+            <div className="flex items-center gap-3 mb-4">
+              <img src={MINE_ICON} alt="" className="w-6 h-6" />
+              <span className="text-sm font-[Orbitron] text-white tracking-wider uppercase font-semibold">
+                Contract Addresses
+              </span>
             </div>
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-0.5">
               <CopyableAddress label="Staking" address={ACTIVE_CHAIN.staking} />
-              <CopyableAddress label="$MINE Token" address={ACTIVE_CHAIN.mineToken} />
+              <CopyableAddress label="$MINE" address={ACTIVE_CHAIN.mineToken} />
               <CopyableAddress label="LP Token" address={ACTIVE_CHAIN.lpToken} />
             </div>
           </motion.div>

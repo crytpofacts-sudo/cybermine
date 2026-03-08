@@ -28,12 +28,11 @@ export default function AppNavbar() {
         <div className="container flex items-center justify-between h-16 md:h-20">
           {/* Logo */}
           <Link href="/" className="flex items-center gap-3 group">
-            <div className="relative w-9 h-9 md:w-10 md:h-10">
-              <div className="absolute inset-0 rounded-lg bg-gradient-to-br from-[#00f0ff] to-[#ff0066] opacity-80 group-hover:opacity-100 transition-opacity" />
-              <div className="absolute inset-[2px] rounded-[6px] bg-[#050510] flex items-center justify-center">
-                <span className="font-[Orbitron] text-[#00f0ff] text-sm font-bold">CM</span>
-              </div>
-            </div>
+            <img
+              src="https://d2xsxph8kpxj0f.cloudfront.net/310419663030263196/SzmZWtoZkXFNHVBrfb4wFY/cybermine-icon-transparent-44WwcLSoNbwT5vFEsrEPF3.webp"
+              alt="CyberMine"
+              className="w-9 h-9 md:w-10 md:h-10 drop-shadow-[0_0_8px_rgba(0,240,255,0.5)] group-hover:drop-shadow-[0_0_12px_rgba(0,240,255,0.7)] transition-all"
+            />
             <span className="font-[Orbitron] text-lg md:text-xl font-bold tracking-wider text-white">
               CYBER<span className="text-[#00f0ff]">MINE</span>
             </span>

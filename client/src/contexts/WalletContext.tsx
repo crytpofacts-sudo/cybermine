@@ -309,8 +309,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       const readProv = getReadProvider();
       const stakingRead = getStakingContract(readProv);
       const [fee, cd, paused, tbw, rs] = await Promise.all([
-        stakingRead.claimFee(),
-        stakingRead.claimCooldown(),
+        stakingRead.feeWei(),
+        stakingRead.cooldownSeconds(),
         stakingRead.paused(),
         stakingRead.totalBaseWeightFp(),
         stakingRead.remainingSupply(),

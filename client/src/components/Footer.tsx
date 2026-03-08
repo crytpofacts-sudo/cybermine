@@ -19,8 +19,7 @@ const footerLinks = [
     links: [
       { label: "PancakeSwap Pool", href: "https://pancakeswap.finance/add/BNB/0x40325c4F37F577111faFC4f31AB7979026626680", external: true },
       { label: "BscScan", href: "https://testnet.bscscan.com/address/0xba75a1cdad9e5ff1218561f039b80d465a37723e", external: true },
-      { label: "Documentation", href: "#" },
-      { label: "Smart Contract", href: "#" },
+      { label: "Smart Contract", href: "https://testnet.bscscan.com/address/0xba75a1cdad9e5ff1218561f039b80d465a37723e#code", external: true },
     ],
   },
   {
@@ -43,12 +42,11 @@ export default function Footer() {
           {/* Brand */}
           <div className="lg:col-span-2">
             <div className="flex items-center gap-3 mb-4">
-              <div className="relative w-9 h-9">
-                <div className="absolute inset-0 rounded-lg bg-gradient-to-br from-[#00f0ff] to-[#ff0066] opacity-80" />
-                <div className="absolute inset-[2px] rounded-[6px] bg-[#050510] flex items-center justify-center">
-                  <span className="font-[Orbitron] text-[#00f0ff] text-sm font-bold">CM</span>
-                </div>
-              </div>
+              <img
+                src="https://d2xsxph8kpxj0f.cloudfront.net/310419663030263196/SzmZWtoZkXFNHVBrfb4wFY/cybermine-icon-transparent-44WwcLSoNbwT5vFEsrEPF3.webp"
+                alt="CyberMine"
+                className="w-9 h-9 drop-shadow-[0_0_8px_rgba(0,240,255,0.5)]"
+              />
               <span className="font-[Orbitron] text-lg font-bold tracking-wider text-white">
                 CYBER<span className="text-[#00f0ff]">MINE</span>
               </span>
