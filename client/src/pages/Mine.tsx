@@ -8,7 +8,7 @@
  *   - Claim history from on-chain events
  *   - Network weight & user weight %
  */
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Wallet, Zap, Clock, TrendingUp, Shield, ChevronDown, ChevronUp,
@@ -25,6 +25,7 @@ import { ACTIVE_CHAIN, addressUrl } from "@/config/contracts";
 import { getStoredReferral, shortenAddress } from "@/lib/referral";
 import { getTierInfo, getWeightBreakdown, getAllTiers } from "@/lib/tiers";
 import { txUrl } from "@/config/contracts";
+import { JsonRpcProvider } from "ethers";
 
 function formatCountdown(seconds: number): string {
   if (seconds <= 0) return "READY";
@@ -64,6 +65,8 @@ export default function Mine() {
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [joinAmount, setJoinAmount] = useState("");
   const [showClaimPopup, setShowClaimPopup] = useState(false);
+  const [claimTimestamps, setClaimTimestamps] = useState<Record<number, number>>({});
+  const timestampCacheRef = useRef<Record<number, number>>({});
 
   const joined = userData?.joined ?? false;
   const paused = protocolData?.paused ?? false;
@@ -175,10 +178,59 @@ export default function Mine() {
     await emergencyWithdrawPending(userData.pendingLp);
   }, [userData, emergencyWithdrawPending]);
 
-  // SVG ring parameters
+  // Fetch block timestamps for claim history
+  useEffect(() => {
+    if (claimHistory.length === 0) return;
+    const blocksToFetch = claimHistory
+      .slice(0, 10)
+      .map((c) => c.blockNumber)
+      .filter((bn) => !timestampCacheRef.current[bn]);
+    if (blocksToFetch.length === 0) {
+      // All cached already, just set state
+      setClaimTimestamps({ ...timestampCacheRef.current });
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const provider = new JsonRpcProvider(ACTIVE_CHAIN.rpcUrl);
+        const results = await Promise.allSettled(
+          blocksToFetch.map((bn) => provider.getBlock(bn))
+        );
+        if (cancelled) return;
+        const newTs: Record<number, number> = {};
+        results.forEach((r, i) => {
+          if (r.status === "fulfilled" && r.value) {
+            newTs[blocksToFetch[i]] = r.value.timestamp;
+            timestampCacheRef.current[blocksToFetch[i]] = r.value.timestamp;
+          }
+        });
+        setClaimTimestamps({ ...timestampCacheRef.current });
+      } catch {
+        // Non-critical
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [claimHistory]);
+
+  // Format relative time
+  const formatRelativeTime = useCallback((ts: number): string => {
+    const now = Math.floor(Date.now() / 1000);
+    const diff = now - ts;
+    if (diff < 60) return "just now";
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+    const date = new Date(ts * 1000);
+    return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }, []);
+
+  // SVG ring parameters — ring at r=130 inside 300px container
+  // Center button at 120px diameter → gap = 130 - 3(strokeWidth/2) - 60 = ~67px uniform gap
   const ringRadius = 130;
   const ringCircumference = 2 * Math.PI * ringRadius;
   const ringOffset = ringCircumference * (1 - cooldownProgress);
+  const centerSize = 120; // diameter of center circle
 
   const lpBalFormatted = formatBigNum(lpBalance, lpDecimals);
   const activeLpFormatted = formatBigNum(userData?.activeLp ?? 0n, lpDecimals);
@@ -539,7 +591,8 @@ export default function Mine() {
                       <circle cx="150" cy="150" r={ringRadius} fill="none" stroke="oklch(0.15 0.02 265)" strokeWidth="6" />
                       {/* Outer decorative ring */}
                       <circle cx="150" cy="150" r="145" fill="none" stroke="oklch(0.12 0.02 265)" strokeWidth="1" />
-                      <circle cx="150" cy="150" r="115" fill="none" stroke="oklch(0.12 0.02 265)" strokeWidth="1" />
+                      {/* Inner decorative ring — marks the gap boundary */}
+                      <circle cx="150" cy="150" r={centerSize / 2 + 8} fill="none" stroke="oklch(0.12 0.02 265)" strokeWidth="1" />
                       {/* Progress ring */}
                       <circle
                         cx="150" cy="150" r={ringRadius} fill="none"
@@ -552,40 +605,43 @@ export default function Mine() {
                       />
                     </svg>
 
-                    {/* Center content */}
-                    <div className="text-center z-10 flex flex-col items-center">
-                      <div className={`font-[Fira_Code] text-2xl font-bold mb-1 transition-colors duration-500 ${
-                        canClaim ? "text-[#00cc88]" : "text-[#00f0ff] text-glow-cyan"
-                      }`}>
-                        {formatCountdown(cooldownLeft)}
-                      </div>
-                      <div className="text-[10px] font-[Orbitron] text-[oklch(0.4_0.02_265)] tracking-wider mb-4">
-                        {canClaim ? "READY TO MINE" : "COOLDOWN"}
-                      </div>
-
-                      {/* Round MINE button */}
-                      <button
-                        onClick={handleClaim}
-                        disabled={!canClaim || txPending}
-                        className={`w-[90px] h-[90px] rounded-full font-[Orbitron] text-xs font-bold tracking-wider transition-all duration-500 flex flex-col items-center justify-center gap-1.5 disabled:opacity-40 ${
-                          canClaim
-                            ? "bg-gradient-to-br from-[#00cc88] to-[#00aa66] text-[#050510] shadow-[0_0_30px_rgba(0,204,136,0.5),0_0_60px_rgba(0,204,136,0.2)] hover:shadow-[0_0_40px_rgba(0,204,136,0.7),0_0_80px_rgba(0,204,136,0.3)] hover:scale-105"
-                            : "bg-[oklch(0.1_0.02_265)] text-[oklch(0.35_0.02_265)] border border-[oklch(0.2_0.02_265)] shadow-[0_0_15px_rgba(0,240,255,0.1)]"
-                        }`}
-                      >
-                        {txPending ? (
-                          <Loader2 size={24} className="animate-spin" />
-                        ) : (
-                          <>
-                            <img
-                              src="https://d2xsxph8kpxj0f.cloudfront.net/310419663030263196/SzmZWtoZkXFNHVBrfb4wFY/cybermine-icon-transparent-44WwcLSoNbwT5vFEsrEPF3.webp"
-                              alt=""
-                              className={`w-6 h-6 ${canClaim ? "" : "opacity-40"}`}
-                            />
-                            <span>{canClaim ? "MINE" : "LOCKED"}</span>
-                          </>
-                        )}
-                      </button>
+                    {/* Center circle — perfectly centered with uniform gap from ring */}
+                    <div className="absolute z-10" style={{ width: centerSize, height: centerSize }}>
+                      {canClaim ? (
+                        /* Clickable MINE button */
+                        <button
+                          onClick={handleClaim}
+                          disabled={txPending}
+                          className="w-full h-full rounded-full font-[Orbitron] text-xs font-bold tracking-wider transition-all duration-500 flex flex-col items-center justify-center gap-1 bg-gradient-to-br from-[#00cc88] to-[#00aa66] text-[#050510] shadow-[0_0_30px_rgba(0,204,136,0.5),0_0_60px_rgba(0,204,136,0.2)] hover:shadow-[0_0_40px_rgba(0,204,136,0.7),0_0_80px_rgba(0,204,136,0.3)] hover:scale-105 disabled:opacity-50"
+                        >
+                          {txPending ? (
+                            <Loader2 size={24} className="animate-spin" />
+                          ) : (
+                            <>
+                              <img
+                                src="https://d2xsxph8kpxj0f.cloudfront.net/310419663030263196/SzmZWtoZkXFNHVBrfb4wFY/cybermine-icon-transparent-44WwcLSoNbwT5vFEsrEPF3.webp"
+                                alt=""
+                                className="w-7 h-7"
+                              />
+                              <span className="text-sm">MINE</span>
+                              <span className="text-[8px] opacity-70 font-[Fira_Code]">READY</span>
+                            </>
+                          )}
+                        </button>
+                      ) : (
+                        /* Non-clickable LOCKED circle — same visual size */
+                        <div className="w-full h-full rounded-full flex flex-col items-center justify-center gap-1 bg-[oklch(0.08_0.02_265)] border border-[oklch(0.2_0.02_265)] shadow-[0_0_15px_rgba(0,240,255,0.08)]">
+                          <img
+                            src="https://d2xsxph8kpxj0f.cloudfront.net/310419663030263196/SzmZWtoZkXFNHVBrfb4wFY/cybermine-icon-transparent-44WwcLSoNbwT5vFEsrEPF3.webp"
+                            alt=""
+                            className="w-7 h-7 opacity-30"
+                          />
+                          <span className="font-[Orbitron] text-xs font-bold tracking-wider text-[oklch(0.35_0.02_265)]">LOCKED</span>
+                          <span className="font-[Fira_Code] text-[10px] font-bold text-[#00f0ff] text-glow-cyan">
+                            {formatCountdown(cooldownLeft)}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -824,7 +880,7 @@ export default function Mine() {
                       <div className="glass-panel rounded-xl p-4">
                         {claimHistory.length === 0 ? (
                           <p className="text-xs text-[oklch(0.4_0.02_265)] font-[Fira_Code] text-center py-4">
-                            No recent claims found (last ~2 days)
+                            No claims yet.
                           </p>
                         ) : (
                           <div className="space-y-2">
@@ -835,16 +891,19 @@ export default function Mine() {
                                     +{formatBigNum(c.reward, mineDecimals)} MINE
                                   </div>
                                   <div className="text-[10px] font-[Fira_Code] text-[oklch(0.4_0.02_265)]">
-                                    Block #{c.blockNumber}
+                                    {claimTimestamps[c.blockNumber]
+                                      ? formatRelativeTime(claimTimestamps[c.blockNumber])
+                                      : `Block #${c.blockNumber}`}
                                   </div>
                                 </div>
                                 <a
                                   href={txUrl(c.txHash)}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-[oklch(0.4_0.02_265)] hover:text-[#00f0ff] transition-colors"
+                                  className="text-[oklch(0.4_0.02_265)] hover:text-[#00f0ff] transition-colors flex items-center gap-1.5"
                                 >
-                                  <ExternalLink size={14} />
+                                  <span className="text-[10px] font-[Fira_Code]">View</span>
+                                  <ExternalLink size={12} />
                                 </a>
                               </div>
                             ))}

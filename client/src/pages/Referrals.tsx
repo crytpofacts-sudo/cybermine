@@ -4,7 +4,7 @@
  * referred members list, and a colorful bonus meter.
  * Referral weight credit is capped at 20% of the referrer's base weight.
  */
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import {
   Wallet, Users, Copy, Check, ExternalLink, AlertTriangle, Loader2,
@@ -40,6 +40,7 @@ interface ReferredMember {
   activeLp?: bigint;
   activeDepositTs?: bigint;
   weight?: number; // computed real-time weight
+  joinTimestamp?: number; // block timestamp for join date
 }
 
 const FP = BigInt(10 ** 18);
@@ -53,6 +54,7 @@ export default function Referrals() {
   const [copied, setCopied] = useState(false);
   const [referredMembers, setReferredMembers] = useState<ReferredMember[]>([]);
   const [loadingMembers, setLoadingMembers] = useState(false);
+  const [copiedAddr, setCopiedAddr] = useState<string | null>(null);
 
   const joined = userData?.joined ?? false;
   const referralCount = userData?.referralCount ?? 0;
@@ -116,8 +118,9 @@ export default function Referrals() {
         let refereeAddresses: string[] = [];
 
         // Primary: progressive event scanning via eventCache (up to 2M blocks, cached)
+        let events: Awaited<ReturnType<typeof fetchReferredMembersCached>> = [];
         try {
-          const events = await fetchReferredMembersCached(address);
+          events = await fetchReferredMembersCached(address);
           refereeAddresses = events.map((e) => e.user);
         } catch (err) {
           console.warn("eventCache fetch failed, trying API:", err);
@@ -143,15 +146,42 @@ export default function Referrals() {
           return;
         }
 
-        // Deduplicate addresses
+        // Deduplicate addresses, keep event data for block timestamps
+        const uniqueMap = new Map<string, { blockNumber?: number; txHash?: string }>();
+        for (const evt of (events || [])) {
+          const key = evt.user.toLowerCase();
+          if (!uniqueMap.has(key)) {
+            uniqueMap.set(key, { blockNumber: evt.blockNumber, txHash: evt.txHash });
+          }
+        }
         refereeAddresses = [...new Set(refereeAddresses.map(a => a.toLowerCase()))];
 
         // Fetch real-time weight for each referee via getUser
         const provider = new JsonRpcProvider(ACTIVE_CHAIN.rpcUrl);
         const staking = new Contract(ACTIVE_CHAIN.staking, STAKING_ABI, provider);
 
+        // Also fetch block timestamps for join dates
+        const blockNumbers = refereeAddresses
+          .map(a => uniqueMap.get(a)?.blockNumber)
+          .filter((bn): bn is number => bn !== undefined);
+        const uniqueBlocks = [...new Set(blockNumbers)];
+        const blockTimestamps: Record<number, number> = {};
+        try {
+          const blockResults = await Promise.allSettled(
+            uniqueBlocks.map(bn => provider.getBlock(bn))
+          );
+          blockResults.forEach((r, i) => {
+            if (r.status === "fulfilled" && r.value) {
+              blockTimestamps[uniqueBlocks[i]] = r.value.timestamp;
+            }
+          });
+        } catch {
+          // Non-critical
+        }
+
         const members: ReferredMember[] = await Promise.all(
           refereeAddresses.map(async (addr) => {
+            const evtData = uniqueMap.get(addr);
             try {
               const u = await staking.getUser(addr);
               const activeLp = BigInt(u.activeLp);
@@ -161,9 +191,23 @@ export default function Referrals() {
               const tier = getTierInfo(activeDepositTs);
               const baseW = Number(cachedBaseWeightFp) / Number(FP);
               const weight = baseW * tier.multiplier;
-              return { address: addr, activeLp, activeDepositTs, weight };
+              return {
+                address: addr,
+                activeLp,
+                activeDepositTs,
+                weight,
+                blockNumber: evtData?.blockNumber,
+                txHash: evtData?.txHash,
+                joinTimestamp: evtData?.blockNumber ? blockTimestamps[evtData.blockNumber] : undefined,
+              };
             } catch {
-              return { address: addr, weight: 0 };
+              return {
+                address: addr,
+                weight: 0,
+                blockNumber: evtData?.blockNumber,
+                txHash: evtData?.txHash,
+                joinTimestamp: evtData?.blockNumber ? blockTimestamps[evtData.blockNumber] : undefined,
+              };
             }
           })
         );
@@ -471,9 +515,7 @@ export default function Referrals() {
                   <div className="text-center py-6">
                     <Users size={24} className="mx-auto mb-2 text-[oklch(0.3_0.02_265)]" />
                     <p className="text-xs text-[oklch(0.4_0.02_265)] font-[Fira_Code]">
-                      {referralCount > 0
-                        ? "Referred members found on-chain but events not in recent block range."
-                        : "No referred miners yet. Share your link to get started!"}
+                      No referrals yet. Share your link to get started!
                     </p>
                   </div>
                 ) : (
@@ -488,7 +530,7 @@ export default function Referrals() {
                       >
                         <div className="flex items-center gap-3">
                           <div
-                            className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-[Orbitron] font-bold"
+                            className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-[Orbitron] font-bold flex-shrink-0"
                             style={{
                               background: `hsl(${(i * 60) % 360}, 70%, 15%)`,
                               border: `1px solid hsl(${(i * 60) % 360}, 70%, 30%)`,
@@ -498,19 +540,41 @@ export default function Referrals() {
                             #{i + 1}
                           </div>
                           <div>
-                            <a
-                              href={addressUrl(m.address)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="font-[Fira_Code] text-xs text-[#00f0ff] hover:underline"
-                            >
-                              {shortenAddress(m.address, 6)}
-                            </a>
-                            {m.activeLp !== undefined && (
-                              <div className="text-[10px] font-[Fira_Code] text-[oklch(0.4_0.02_265)]">
-                                {formatBigNum(m.activeLp, lpDecimals, 2)} LP staked
-                              </div>
-                            )}
+                            <div className="flex items-center gap-1.5">
+                              <a
+                                href={addressUrl(m.address)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="font-[Fira_Code] text-xs text-[#00f0ff] hover:underline"
+                              >
+                                {shortenAddress(m.address, 6)}
+                              </a>
+                              <button
+                                onClick={async () => {
+                                  try {
+                                    await navigator.clipboard.writeText(m.address);
+                                    setCopiedAddr(m.address);
+                                    setTimeout(() => setCopiedAddr(null), 2000);
+                                  } catch {}
+                                }}
+                                className="text-[oklch(0.4_0.02_265)] hover:text-[#00f0ff] transition-colors"
+                                title="Copy address"
+                              >
+                                {copiedAddr === m.address ? <Check size={10} /> : <Copy size={10} />}
+                              </button>
+                            </div>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              {m.activeLp !== undefined && (
+                                <span className="text-[10px] font-[Fira_Code] text-[oklch(0.4_0.02_265)]">
+                                  {formatBigNum(m.activeLp, lpDecimals, 2)} LP
+                                </span>
+                              )}
+                              {m.joinTimestamp && (
+                                <span className="text-[10px] font-[Fira_Code] text-[oklch(0.35_0.02_265)]">
+                                  Joined {new Date(m.joinTimestamp * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                         <div className="flex items-center gap-3">
