@@ -34,6 +34,7 @@ import { ACTIVE_CHAIN, txUrl } from "@/config/contracts";
 import { STAKING_ABI } from "@/config/stakingAbi";
 import { ERC20_ABI } from "@/config/erc20Abi";
 import { getStoredReferral, isValidAddress, shortenAddress } from "@/lib/referral";
+import { fetchClaimHistory as fetchClaimHistoryCached, type ClaimedEvent } from "@/lib/eventCache";
 import { getWalletConnectProvider, disconnectWalletConnect, getWcInstance } from "@/lib/walletconnect";
 import ConnectModal, { type WalletType } from "@/components/ConnectModal";
 
@@ -193,28 +194,21 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     return new Contract(ACTIVE_CHAIN.mineToken, ERC20_ABI, signerOrProvider);
   }
 
-  // ─── Fetch claim history from events ────────────────────────
-  const fetchClaimHistory = useCallback(async (userAddr: string) => {
+  // ─── Fetch claim history from events (progressive scanning via eventCache) ─
+  const fetchClaimHistoryFn = useCallback(async (userAddr: string) => {
     try {
-      const provider = getReadProvider();
-      const staking = getStakingContract(provider);
-      const block = await provider.getBlockNumber();
-      const fromBlock = Math.max(0, block - 50000);
-      const filter = staking.filters.Claimed(userAddr);
-      const events = await staking.queryFilter(filter, fromBlock, block);
-
-      const claims: ClaimEvent[] = events.map((e: any) => ({
-        txHash: e.transactionHash,
-        blockNumber: e.blockNumber,
-        reward: BigInt(e.args.reward),
-        baseWeightFp: BigInt(e.args.baseWeightFp),
-        referralBonusUsedFp: BigInt(e.args.referralBonusUsedFp),
-        totalBaseWeightFp: BigInt(e.args.totalBaseWeightFp),
-        remainingSupply: BigInt(e.args.remainingSupply),
+      const claims = await fetchClaimHistoryCached(userAddr);
+      // Map ClaimedEvent → ClaimEvent
+      const mapped: ClaimEvent[] = claims.map((c) => ({
+        txHash: c.txHash,
+        blockNumber: c.blockNumber,
+        reward: c.reward,
+        baseWeightFp: c.baseWeightFp,
+        referralBonusUsedFp: c.referralBonusUsedFp,
+        totalBaseWeightFp: c.totalBaseWeightFp,
+        remainingSupply: c.remainingSupply,
       }));
-
-      claims.sort((a, b) => b.blockNumber - a.blockNumber);
-      setClaimHistory(claims);
+      setClaimHistory(mapped);
     } catch (err) {
       console.warn("fetchClaimHistory failed:", err);
     }
@@ -637,9 +631,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (connected && address && !wrongChain) {
       refreshAll();
-      fetchClaimHistory(address);
+      fetchClaimHistoryFn(address);
     }
-  }, [connected, address, wrongChain, refreshAll, fetchClaimHistory]);
+  }, [connected, address, wrongChain, refreshAll, fetchClaimHistoryFn]);
 
   // ─── Polling (every 20s) ─────────────────────────────────────
   useEffect(() => {
@@ -759,11 +753,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         // Non-critical
       }
 
-      if (address) fetchClaimHistory(address);
+      if (address) fetchClaimHistoryFn(address);
     }
 
     return hash;
-  }, [protocolData, mineBalance, address, mineDecimals, executeTx, fetchClaimHistory]);
+  }, [protocolData, mineBalance, address, mineDecimals, executeTx, fetchClaimHistoryFn]);
 
   const withdraw = useCallback(
     async (amount: bigint) => {

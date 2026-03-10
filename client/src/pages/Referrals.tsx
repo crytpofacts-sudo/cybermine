@@ -11,6 +11,7 @@ import {
   ArrowUpRight, TrendingUp, Gift, Link2,
 } from "lucide-react";
 import { formatUnits, JsonRpcProvider, Contract } from "ethers";
+import { fetchReferredMembers as fetchReferredMembersCached } from "@/lib/eventCache";
 import { Link } from "wouter";
 import AppNavbar from "@/components/AppNavbar";
 import ParticleBackground from "@/components/ParticleBackground";
@@ -100,10 +101,10 @@ export default function Referrals() {
     return { used: usedCredit, max: maxCredit, pct };
   }, [userData]);
 
-  // Fetch referred members from /api/referrals (Cloudflare Pages Function)
-  // Falls back to on-chain event scanning if the API is unavailable
+  // Fetch referred members using progressive event scanning (eventCache)
+  // with fallback to /api/referrals endpoint
   useEffect(() => {
-    if (!address || !joined || referralCount === 0) {
+    if (!address || !joined) {
       setReferredMembers([]);
       return;
     }
@@ -112,44 +113,42 @@ export default function Referrals() {
     const fetchMembers = async () => {
       setLoadingMembers(true);
       try {
-        // Try the API first
         let refereeAddresses: string[] = [];
-        let fromApi = false;
 
+        // Primary: progressive event scanning via eventCache (up to 2M blocks, cached)
         try {
-          const res = await fetch(`/api/referrals?referrer=${address}&pageSize=100`);
-          if (res.ok) {
-            const data = await res.json();
-            if (Array.isArray(data.referees) && data.referees.length > 0) {
-              refereeAddresses = data.referees;
-              fromApi = true;
-            }
-          }
-        } catch {
-          // API unavailable, fall back to events
+          const events = await fetchReferredMembersCached(address);
+          refereeAddresses = events.map((e) => e.user);
+        } catch (err) {
+          console.warn("eventCache fetch failed, trying API:", err);
         }
 
-        // Fallback: scan Joined events on-chain
-        if (!fromApi) {
+        // Fallback: try the API
+        if (refereeAddresses.length === 0) {
           try {
-            const provider = new JsonRpcProvider(ACTIVE_CHAIN.rpcUrl);
-            const staking = new Contract(ACTIVE_CHAIN.staking, STAKING_ABI, provider);
-            const currentBlock = await provider.getBlockNumber();
-            const fromBlock = Math.max(0, currentBlock - 500_000);
-            const filter = staking.filters.Joined(null, address);
-            const events = await staking.queryFilter(filter, fromBlock, currentBlock);
-            refereeAddresses = events.map((e: any) => e.args?.[0] || "").filter(Boolean);
-          } catch (err) {
-            console.warn("Failed to fetch referred members from events:", err);
+            const res = await fetch(`/api/referrals?referrer=${address}&pageSize=100`);
+            if (res.ok) {
+              const data = await res.json();
+              if (Array.isArray(data.referees) && data.referees.length > 0) {
+                refereeAddresses = data.referees;
+              }
+            }
+          } catch {
+            // API unavailable
           }
         }
 
-        if (cancelled) return;
+        if (cancelled || refereeAddresses.length === 0) {
+          if (!cancelled) setReferredMembers([]);
+          return;
+        }
+
+        // Deduplicate addresses
+        refereeAddresses = [...new Set(refereeAddresses.map(a => a.toLowerCase()))];
 
         // Fetch real-time weight for each referee via getUser
         const provider = new JsonRpcProvider(ACTIVE_CHAIN.rpcUrl);
         const staking = new Contract(ACTIVE_CHAIN.staking, STAKING_ABI, provider);
-        const nowTs = BigInt(Math.floor(Date.now() / 1000));
 
         const members: ReferredMember[] = await Promise.all(
           refereeAddresses.map(async (addr) => {
@@ -179,7 +178,7 @@ export default function Referrals() {
     };
     fetchMembers();
     return () => { cancelled = true; };
-  }, [address, joined, referralCount]);
+  }, [address, joined]);
 
   return (
     <div className="min-h-screen bg-[#050510] text-white scan-line">

@@ -1,25 +1,47 @@
 /*
  * CyberMine Hero Section — Neon Metropolis Design
- * Full-viewport hero with cyberpunk cityscape, live protocol stats,
- * supply progress bar, and contract address links
+ * Full-viewport hero with cyberpunk cityscape, FOMO emission progress bar,
+ * live protocol stats (total miners, MINE distributed, network weight),
+ * and clear contract address links.
+ *
+ * Data sources (read-only, no wallet needed):
+ *   - remainingSupply() from staking contract
+ *   - totalSupply() from MINE token contract
+ *   - totalBaseWeightFp() from staking contract
+ *   - cooldownSeconds() from staking contract
+ *   - Joined events via eventCache → total miners count
  */
-import { motion } from "framer-motion";
-import { useEffect, useState, useMemo } from "react";
+import { motion, useMotionValue, useTransform, animate } from "framer-motion";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { Link } from "wouter";
 import { formatUnits, JsonRpcProvider, Contract } from "ethers";
 import { ACTIVE_CHAIN, addressUrl } from "@/config/contracts";
 import { STAKING_ABI } from "@/config/stakingAbi";
-import { ExternalLink, Copy, CheckCircle2, Users, Coins, Activity, Timer } from "lucide-react";
+import { ERC20_ABI } from "@/config/erc20Abi";
+import { fetchJoinedEvents } from "@/lib/eventCache";
+import { ExternalLink, Copy, CheckCircle2, Users, Coins, Activity, Timer, Shield } from "lucide-react";
 
 const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310419663030263196/SzmZWtoZkXFNHVBrfb4wFY/hero-bg-UXY5vX9WHyaeosKoszJm37.webp";
 const MINE_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310419663030263196/SzmZWtoZkXFNHVBrfb4wFY/cybermine-icon-transparent-44WwcLSoNbwT5vFEsrEPF3.webp";
 
-const TOTAL_SUPPLY = 21_000_000_000; // 21B MINE
 const FP = BigInt(10 ** 18);
 
-function CopyableAddress({ label, address, icon }: { label: string; address: string; icon?: React.ReactNode }) {
+function formatLargeNumber(val: number, dp = 2): string {
+  if (val < 0) return "0";
+  if (val >= 1e9) return (val / 1e9).toFixed(dp) + "B";
+  if (val >= 1e6) return (val / 1e6).toFixed(dp) + "M";
+  if (val >= 1e3) return (val / 1e3).toFixed(1) + "K";
+  return val.toFixed(dp);
+}
+
+function formatFullNumber(val: number): string {
+  return val.toLocaleString("en-US", { maximumFractionDigits: 2 });
+}
+
+/* ─── Copyable Address Row ──────────────────────────────────────── */
+function CopyableAddress({ label, address }: { label: string; address: string }) {
   const [copied, setCopied] = useState(false);
-  const short = address.slice(0, 8) + "..." + address.slice(-6);
+  const short = address.slice(0, 10) + "..." + address.slice(-8);
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(address);
@@ -28,50 +50,86 @@ function CopyableAddress({ label, address, icon }: { label: string; address: str
   };
 
   return (
-    <div className="flex items-center gap-3 py-2.5 px-3 rounded-lg hover:bg-[oklch(0.85_0.18_192/0.05)] transition-colors group">
-      {icon && <div className="text-[oklch(0.5_0.02_265)] group-hover:text-[#00f0ff] transition-colors">{icon}</div>}
-      <span className="text-xs font-[Orbitron] text-[oklch(0.55_0.02_265)] uppercase tracking-wider min-w-[80px]">{label}</span>
+    <div className="flex items-center gap-3 py-3 px-4 rounded-lg hover:bg-[oklch(0.85_0.18_192/0.06)] transition-colors group border border-transparent hover:border-[oklch(0.85_0.18_192/0.15)]">
+      <span className="text-sm font-[Orbitron] text-[oklch(0.6_0.02_265)] uppercase tracking-wider min-w-[100px] font-semibold">
+        {label}
+      </span>
       <a
         href={addressUrl(address)}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-sm font-[Fira_Code] text-[#00f0ff] hover:underline tracking-wide"
+        className="text-base font-[Fira_Code] text-[#00f0ff] hover:underline tracking-wide"
       >
         {short}
       </a>
-      <button onClick={handleCopy} className="ml-1 text-[oklch(0.4_0.02_265)] hover:text-[#00f0ff] transition-colors">
-        {copied ? <CheckCircle2 size={14} className="text-green-400" /> : <Copy size={14} />}
+      <button
+        onClick={handleCopy}
+        className="ml-auto p-1.5 rounded-md text-[oklch(0.45_0.02_265)] hover:text-[#00f0ff] hover:bg-[oklch(0.85_0.18_192/0.1)] transition-colors"
+        title="Copy address"
+      >
+        {copied ? <CheckCircle2 size={16} className="text-green-400" /> : <Copy size={16} />}
       </button>
       <a
         href={addressUrl(address)}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-[oklch(0.4_0.02_265)] hover:text-[#00f0ff] transition-colors"
+        className="p-1.5 rounded-md text-[oklch(0.45_0.02_265)] hover:text-[#00f0ff] hover:bg-[oklch(0.85_0.18_192/0.1)] transition-colors"
+        title="View on BscScan"
       >
-        <ExternalLink size={14} />
+        <ExternalLink size={16} />
       </a>
     </div>
   );
 }
 
+/* ─── Animated Counter ──────────────────────────────────────────── */
+function AnimatedCounter({ value, formatter }: { value: number; formatter: (v: number) => string }) {
+  const motionVal = useMotionValue(0);
+  const display = useTransform(motionVal, (v) => formatter(v));
+  const [text, setText] = useState(formatter(0));
+  const prevRef = useRef(0);
+
+  useEffect(() => {
+    const controls = animate(motionVal, value, {
+      duration: 1.5,
+      ease: "easeOut",
+    });
+    return controls.stop;
+  }, [value, motionVal]);
+
+  useEffect(() => {
+    const unsub = display.on("change", (v) => setText(v));
+    return unsub;
+  }, [display]);
+
+  return <span>{text}</span>;
+}
+
+/* ─── Main Component ────────────────────────────────────────────── */
 export default function HeroSection() {
-  // Live protocol stats fetched from RPC (no wallet needed)
+  // On-chain data
   const [remainingSupply, setRemainingSupply] = useState<bigint | null>(null);
+  const [totalSupply, setTotalSupply] = useState<bigint | null>(null);
   const [totalWeight, setTotalWeight] = useState<bigint | null>(null);
   const [cooldown, setCooldown] = useState<bigint | null>(null);
   const [totalMiners, setTotalMiners] = useState<number | null>(null);
 
+  // Fetch protocol stats from RPC (no wallet needed)
   useEffect(() => {
     async function fetchProtocolStats() {
       try {
         const provider = new JsonRpcProvider(ACTIVE_CHAIN.rpcUrl, ACTIVE_CHAIN.chainId);
         const staking = new Contract(ACTIVE_CHAIN.staking, STAKING_ABI, provider);
-        const [supply, weight, cd] = await Promise.all([
+        const mineToken = new Contract(ACTIVE_CHAIN.mineToken, ERC20_ABI, provider);
+
+        const [supply, ts, weight, cd] = await Promise.all([
           staking.remainingSupply().catch(() => null),
+          mineToken.totalSupply().catch(() => null),
           staking.totalBaseWeightFp().catch(() => null),
           staking.cooldownSeconds().catch(() => null),
         ]);
         if (supply !== null) setRemainingSupply(BigInt(supply));
+        if (ts !== null) setTotalSupply(BigInt(ts));
         if (weight !== null) setTotalWeight(BigInt(weight));
         if (cd !== null) setCooldown(BigInt(cd));
       } catch (err) {
@@ -83,78 +141,60 @@ export default function HeroSection() {
     return () => clearInterval(interval);
   }, []);
 
-  // Fetch total miners from Joined events directly (no /api/stats dependency)
+  // Fetch total miners from Joined events using cached progressive scanning
   useEffect(() => {
-    async function fetchTotalMiners() {
-      // Try /api/stats first (Cloudflare Pages Function)
+    async function fetchMiners() {
       try {
-        const res = await fetch("/api/stats");
-        if (res.ok) {
-          const data = await res.json();
-          if (typeof data.totalUsers === "number" && data.totalUsers > 0) {
-            setTotalMiners(data.totalUsers);
-            return;
-          }
-        }
-      } catch {
-        // Fall through to on-chain query
-      }
-
-      // Fallback: count Joined events on-chain
-      try {
-        const provider = new JsonRpcProvider(ACTIVE_CHAIN.rpcUrl, ACTIVE_CHAIN.chainId);
-        const staking = new Contract(ACTIVE_CHAIN.staking, STAKING_ABI, provider);
-        const block = await provider.getBlockNumber();
-        const fromBlock = Math.max(0, block - 500_000);
-        const filter = staking.filters.Joined();
-        const events = await staking.queryFilter(filter, fromBlock, block);
-        setTotalMiners(events.length);
-      } catch {
-        // Silently fail
+        const events = await fetchJoinedEvents();
+        // Deduplicate by user address for accurate unique count
+        const uniqueUsers = new Set(events.map((e) => e.user.toLowerCase()));
+        setTotalMiners(uniqueUsers.size);
+      } catch (err) {
+        console.warn("HeroSection: total miners fetch failed", err);
       }
     }
-    fetchTotalMiners();
-    const interval = setInterval(fetchTotalMiners, 120_000);
+    fetchMiners();
+    const interval = setInterval(fetchMiners, 120_000);
     return () => clearInterval(interval);
   }, []);
 
-  // Derived stats
-  const mineDistributed = useMemo(() => {
-    if (remainingSupply === null) return null;
-    const remaining = Number(formatUnits(remainingSupply, 18));
-    // 99% of total supply goes to miners, minus what's remaining in the contract
-    return TOTAL_SUPPLY * 0.99 - remaining;
-  }, [remainingSupply]);
+  // ─── Derived stats ──────────────────────────────────────────────
+  const emissionPool = useMemo(() => {
+    if (totalSupply === null) return null;
+    // 99% of total supply goes to emission
+    return (totalSupply * 99n) / 100n;
+  }, [totalSupply]);
 
-  const mineDistributedDisplay = useMemo(() => {
-    if (mineDistributed === null) return "...";
-    if (mineDistributed < 0) return "0";
-    if (mineDistributed >= 1e9) return (mineDistributed / 1e9).toFixed(2) + "B";
-    if (mineDistributed >= 1e6) return (mineDistributed / 1e6).toFixed(1) + "M";
-    if (mineDistributed >= 1e3) return (mineDistributed / 1e3).toFixed(1) + "K";
-    return mineDistributed.toFixed(0);
-  }, [mineDistributed]);
+  const distributed = useMemo(() => {
+    if (emissionPool === null || remainingSupply === null) return null;
+    const d = emissionPool - remainingSupply;
+    return d < 0n ? 0n : d;
+  }, [emissionPool, remainingSupply]);
+
+  const distributedNum = useMemo(() => {
+    if (distributed === null) return 0;
+    return Number(formatUnits(distributed, 18));
+  }, [distributed]);
+
+  const emissionPoolNum = useMemo(() => {
+    if (emissionPool === null) return 0;
+    return Number(formatUnits(emissionPool, 18));
+  }, [emissionPool]);
+
+  const remainingNum = useMemo(() => {
+    if (remainingSupply === null) return 0;
+    return Number(formatUnits(remainingSupply, 18));
+  }, [remainingSupply]);
 
   const supplyPct = useMemo(() => {
-    if (mineDistributed === null) return 0;
-    const totalEmission = TOTAL_SUPPLY * 0.99;
-    return Math.max(0, (mineDistributed / totalEmission) * 100);
-  }, [mineDistributed]);
-
-  const remainingDisplay = useMemo(() => {
-    if (remainingSupply === null) return "...";
-    const val = Number(formatUnits(remainingSupply, 18));
-    if (val >= 1e9) return (val / 1e9).toFixed(2) + "B";
-    if (val >= 1e6) return (val / 1e6).toFixed(1) + "M";
-    return val.toLocaleString();
-  }, [remainingSupply]);
+    if (emissionPoolNum <= 0 || distributedNum <= 0) return 0;
+    return (distributedNum / emissionPoolNum) * 100;
+  }, [distributedNum, emissionPoolNum]);
 
   const totalWeightDisplay = useMemo(() => {
     if (totalWeight === null) return "...";
     const val = Number(totalWeight) / Number(FP);
-    if (val >= 1e6) return (val / 1e6).toFixed(2) + "M";
-    if (val >= 1e3) return (val / 1e3).toFixed(1) + "K";
-    return val.toFixed(2);
+    return formatLargeNumber(val);
   }, [totalWeight]);
 
   const cooldownDisplay = useMemo(() => {
@@ -167,12 +207,7 @@ export default function HeroSection() {
     <section className="relative min-h-screen flex items-center overflow-hidden">
       {/* Background Image */}
       <div className="absolute inset-0">
-        <img
-          src={HERO_BG}
-          alt=""
-          className="w-full h-full object-cover"
-          loading="eager"
-        />
+        <img src={HERO_BG} alt="" className="w-full h-full object-cover" loading="eager" />
         <div className="absolute inset-0 bg-gradient-to-b from-[#050510]/70 via-[#050510]/50 to-[#050510]" />
       </div>
 
@@ -182,7 +217,7 @@ export default function HeroSection() {
       {/* Content */}
       <div className="relative container pt-28 pb-20 md:pt-36 md:pb-28">
         <div className="max-w-4xl">
-          {/* Testnet Badge */}
+          {/* Badges */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -255,7 +290,7 @@ export default function HeroSection() {
             </a>
           </motion.div>
 
-          {/* Supply Progress Bar */}
+          {/* ═══ EMISSION PROGRESS BAR ═══ */}
           <motion.div
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
@@ -263,41 +298,66 @@ export default function HeroSection() {
             className="glass-panel rounded-xl p-5 md:p-6 mb-6 border-[oklch(0.85_0.18_192/0.15)]"
           >
             <div className="flex items-center justify-between mb-3">
-              <span className="text-sm font-[Orbitron] text-[oklch(0.6_0.02_265)] tracking-wider uppercase font-semibold">
-                Emission Progress
+              <span className="text-sm font-[Orbitron] text-white tracking-wider uppercase font-bold flex items-center gap-2">
+                <Activity size={16} className="text-[#00f0ff]" />
+                EMISSION PROGRESS
               </span>
-              <span className="text-sm font-[Fira_Code] text-[#00f0ff] font-semibold">
-                {supplyPct.toFixed(4)}% distributed
+              <span className="text-sm font-[Fira_Code] text-[#00f0ff] font-bold">
+                {distributed !== null ? (
+                  <AnimatedCounter value={supplyPct} formatter={(v) => v.toFixed(4) + "% mined"} />
+                ) : (
+                  "..."
+                )}
               </span>
             </div>
-            <div className="h-4 rounded-full bg-[oklch(0.12_0.02_265)] overflow-hidden mb-3 border border-[oklch(0.2_0.02_265/0.3)]">
+
+            {/* Progress bar */}
+            <div className="relative h-5 rounded-full bg-[oklch(0.1_0.02_265)] overflow-hidden mb-3 border border-[oklch(0.2_0.02_265/0.3)]">
               <motion.div
-                className="h-full rounded-full"
+                className="absolute inset-y-0 left-0 rounded-full"
                 style={{
                   background: "linear-gradient(90deg, #00f0ff, #00cc88, #ff0066)",
+                  boxShadow: "0 0 20px rgba(0,240,255,0.3), 0 0 40px rgba(0,204,136,0.15)",
                 }}
                 initial={{ width: 0 }}
-                animate={{ width: `${Math.max(supplyPct, 0.5)}%` }}
-                transition={{ duration: 1.5, ease: "easeOut" }}
+                animate={{ width: `${Math.max(supplyPct, 0.3)}%` }}
+                transition={{ duration: 2, ease: "easeOut" }}
+              />
+              {/* Pulse glow at the edge */}
+              <motion.div
+                className="absolute top-0 bottom-0 w-2 rounded-full bg-white/40"
+                style={{ left: `${Math.max(supplyPct, 0.3)}%` }}
+                animate={{ opacity: [0.3, 0.8, 0.3] }}
+                transition={{ duration: 2, repeat: Infinity }}
               />
             </div>
+
             <div className="flex items-center justify-between text-xs font-[Fira_Code]">
-              <span className="text-[oklch(0.5_0.02_265)]">
-                Remaining: <span className="text-[#00f0ff] font-semibold">{remainingDisplay}</span> MINE
+              <span className="text-[oklch(0.55_0.02_265)]">
+                Remaining:{" "}
+                <span className="text-[#00f0ff] font-bold" title={remainingSupply !== null ? formatFullNumber(remainingNum) : ""}>
+                  {remainingSupply !== null ? formatLargeNumber(remainingNum) : "..."}
+                </span>{" "}
+                MINE
               </span>
-              <span className="text-[oklch(0.5_0.02_265)]">
-                Emission Pool: <span className="text-[oklch(0.65_0.02_265)] font-semibold">20.79B</span> MINE (99%)
+              <span className="text-[oklch(0.55_0.02_265)]">
+                Emission Pool:{" "}
+                <span className="text-[oklch(0.7_0.02_265)] font-bold" title={emissionPool !== null ? formatFullNumber(emissionPoolNum) : ""}>
+                  {emissionPool !== null ? formatLargeNumber(emissionPoolNum) : "..."}
+                </span>{" "}
+                MINE (99%)
               </span>
             </div>
           </motion.div>
 
-          {/* Stats Row - 4 cards */}
+          {/* ═══ STATS ROW ═══ */}
           <motion.div
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.7, delay: 0.4 }}
             className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-5 mb-6"
           >
+            {/* Total Miners */}
             <div className="glass-panel rounded-xl p-4 md:p-5 border-[oklch(0.85_0.18_192/0.2)] hover:border-[oklch(0.85_0.18_192/0.4)] transition-all duration-300">
               <div className="flex items-center gap-2 mb-2">
                 <Users size={14} className="text-[#ff0066]" />
@@ -309,6 +369,8 @@ export default function HeroSection() {
                 {totalMiners !== null ? totalMiners.toLocaleString() : "..."}
               </div>
             </div>
+
+            {/* $MINE Distributed */}
             <div className="glass-panel rounded-xl p-4 md:p-5 border-[oklch(0.85_0.18_192/0.2)] hover:border-[oklch(0.85_0.18_192/0.4)] transition-all duration-300">
               <div className="flex items-center gap-2 mb-2">
                 <Coins size={14} className="text-[#00f0ff]" />
@@ -316,10 +378,16 @@ export default function HeroSection() {
                   $MINE Distributed
                 </span>
               </div>
-              <div className="text-xl md:text-2xl font-bold text-[#00f0ff] text-glow-cyan">
-                {mineDistributedDisplay}
+              <div className="text-xl md:text-2xl font-bold text-[#00f0ff] text-glow-cyan" title={distributed !== null ? formatFullNumber(distributedNum) : ""}>
+                {distributed !== null ? (
+                  <AnimatedCounter value={distributedNum} formatter={(v) => formatLargeNumber(v)} />
+                ) : (
+                  "..."
+                )}
               </div>
             </div>
+
+            {/* Network Weight */}
             <div className="glass-panel rounded-xl p-4 md:p-5 border-[oklch(0.85_0.18_192/0.2)] hover:border-[oklch(0.85_0.18_192/0.4)] transition-all duration-300">
               <div className="flex items-center gap-2 mb-2">
                 <Activity size={14} className="text-[#00f0ff]" />
@@ -331,6 +399,8 @@ export default function HeroSection() {
                 {totalWeightDisplay}
               </div>
             </div>
+
+            {/* Claim Cooldown */}
             <div className="glass-panel rounded-xl p-4 md:p-5 border-[oklch(0.85_0.18_192/0.2)] hover:border-[oklch(0.85_0.18_192/0.4)] transition-all duration-300">
               <div className="flex items-center gap-2 mb-2">
                 <Timer size={14} className="text-[oklch(0.8_0.2_90)]" />
@@ -344,23 +414,26 @@ export default function HeroSection() {
             </div>
           </motion.div>
 
-          {/* Contract Addresses - bigger and more visible */}
+          {/* ═══ CONTRACT ADDRESSES ═══ */}
           <motion.div
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.7, delay: 0.45 }}
             className="glass-panel rounded-xl p-5 md:p-6 border-[oklch(0.85_0.18_192/0.2)]"
           >
-            <div className="flex items-center gap-3 mb-4">
-              <img src={MINE_ICON} alt="" className="w-6 h-6" />
-              <span className="text-sm font-[Orbitron] text-white tracking-wider uppercase font-semibold">
+            <div className="flex items-center gap-3 mb-2">
+              <Shield size={18} className="text-[#00f0ff]" />
+              <span className="text-base font-[Orbitron] text-white tracking-wider uppercase font-bold">
                 Contract Addresses
               </span>
             </div>
-            <div className="flex flex-col gap-0.5">
-              <CopyableAddress label="Staking" address={ACTIVE_CHAIN.staking} />
-              <CopyableAddress label="$MINE" address={ACTIVE_CHAIN.mineToken} />
-              <CopyableAddress label="LP Token" address={ACTIVE_CHAIN.lpToken} />
+            <p className="text-xs font-[Space_Grotesk] text-[oklch(0.5_0.02_265)] mb-4">
+              Verified contracts on {ACTIVE_CHAIN.isTestnet ? "BSC Testnet" : "BSC Mainnet"}
+            </p>
+            <div className="flex flex-col gap-1">
+              <CopyableAddress label="STAKING" address={ACTIVE_CHAIN.staking} />
+              <CopyableAddress label="$MINE TOKEN" address={ACTIVE_CHAIN.mineToken} />
+              <CopyableAddress label="LP PAIR" address={ACTIVE_CHAIN.lpToken} />
             </div>
           </motion.div>
         </div>

@@ -33,6 +33,13 @@ export const ERC20_ABI = [
   },
   {
     inputs: [],
+    name: "totalSupply",
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
     name: "decimals",
     outputs: [{ name: "", type: "uint8" }],
     stateMutability: "view",
